@@ -40,14 +40,14 @@ class SSDP():
         for interface in interfaces:
             (mac, ip) = get_interface(interface)
 
-            # Inbound interface
+            # Receiving socket
             r = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
             r.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             mreq = struct.pack('4s4s', socket.inet_aton(self.addr), socket.inet_aton(ip))
             r.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
             r.bind((self.addr, self.port))
 
-            # Outbound interface
+            # Sending socket
             s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
             s.bind((interface, 0))
 
