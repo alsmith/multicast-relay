@@ -1,7 +1,6 @@
 #!/usr/bin/python
 
 import argparse
-import binascii
 import fcntl
 import logging
 import logging.handlers
