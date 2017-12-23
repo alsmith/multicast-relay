@@ -19,8 +19,10 @@ class SSDP():
         self.interfaces = {}
         self.addr = '239.255.255.250'
         self.port = 1900
-        self.mac = '\x01\x00\x5e\x7f\xff\xfa'
-        self.ethertype = '\x08\x00'
+        mac = 0x01005e000000
+        mac |= self.ip2long(self.addr) & 0x7fffff
+        self.mac = struct.pack('!Q', mac)[2:]
+        self.ethertype = struct.pack('!h', 0x0800)
 
         # Receiving socket
         r = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
