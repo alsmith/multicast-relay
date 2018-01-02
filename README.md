@@ -3,7 +3,7 @@ Relay multicast packets between interfaces
 
 Useful, for example, if you have Sonos speakers on one interface, or VLAN,
 and you want to be able to control them from devices on a different
-interface/VLAN.
+interface/VLAN. Similar for Chromecast devices.
 
 By default, SSDP multicast packets received on 239.255.255.250:1900 are
 relayed other interfaces listed, as well as multicast DNS packets received
