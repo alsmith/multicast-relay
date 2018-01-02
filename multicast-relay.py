@@ -126,6 +126,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
                         help='Relay between interfaces.')
+    parser.add_argument('--relay', nargs='*',
+                        help='Relay between interfaces.')
     parser.add_argument('--noMDNS', action='store_true',
                         help='Do not relay mDNS packets.')
     parser.add_argument('--noSSDP', action='store_true',
@@ -162,12 +164,36 @@ def main():
     else:
         logger.setLevel(logging.WARN)
 
-    mr = MulticastRelay(args.interfaces, args.verbose)
+    relays = set()
     if not args.noMDNS:
-        mr.addListener('224.0.0.251', 5353)
+        relays.add('224.0.0.251:5353')
     if not args.noSSDP:
-        mr.addListener('239.255.255.250', 1900)
-    mr.loop()
+        relays.add('239.255.255.250:1900')
+
+    if args.relay:
+        for relay in args.relay:
+            relays.add(relay)
+
+    multicastRelay = MulticastRelay(args.interfaces, args.verbose)
+    for relay in relays:
+        try:
+            (addr, port) = relay.split(':')
+            ip = MulticastRelay.ip2long(addr)
+            port = int(port)
+        except:
+            log().warning('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
+            return 1
+
+        if ip < MulticastRelay.ip2long('224.0.0.0') or ip >= MulticastRelay.ip2long('239.255.255.255'):
+            log().warning('IP address %s not a multicast address' % addr)
+            return 1
+        if port < 0 or port > 65535:
+            log().warning('UDP port %s out of range' % port)
+            return 1
+
+        log().info('Adding multicast relay for %s:%s' % (addr, port))
+        multicastRelay.addListener(addr, port)
+    multicastRelay.loop()
 
 if __name__ == '__main__':
     sys.exit(main())
