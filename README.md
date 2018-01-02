@@ -6,8 +6,8 @@ and you want to be able to control them from devices on a different
 interface/VLAN. Similar for Chromecast devices.
 
 By default, SSDP multicast packets received on 239.255.255.250:1900 are
-relayed other interfaces listed, as well as multicast DNS packets received
-on 224.0.0.251:5353.
+relayed to the other interfaces listed, as well as multicast DNS packets
+received on 224.0.0.251:5353.
 
 usage: multicast-relay.py [-h] --interfaces INTERFACES [INTERFACES ...] [--relay MULTICAST:PORT [MULTICAST:PORT ...] [--noMDNS] [--noSSDP] [--foreground] [--verbose]
 
