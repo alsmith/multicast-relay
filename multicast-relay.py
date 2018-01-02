@@ -13,14 +13,17 @@ import sys
 def log():
     return logging.getLogger(__file__)
 
-class SSDP():
+class MulticastRelay():
     def __init__(self, interfaces, verbose):
+        self.interfaces = interfaces
         self.verbose = verbose
-        self.interfaces = {}
-        self.addr = '239.255.255.250'
-        self.port = 1900
+        self.transmitters = []
+        self.receivers = []
+
+
+    def addListener(self, addr, port):
         mac = 0x01005e000000
-        mac |= self.ip2long(self.addr) & 0x7fffff
+        mac |= self.ip2long(addr) & 0x7fffff
         self.mac = struct.pack('!Q', mac)[2:]
         self.ethertype = struct.pack('!h', 0x0800)
 
@@ -28,51 +31,59 @@ class SSDP():
         r = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
         r.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        for interface in interfaces:
+        for interface in self.interfaces:
             mac, ip, netmask = self.getInterface(interface)
 
             # Add this interface to the receiving socket's list.
-            mreq = struct.pack('4s4s', socket.inet_aton(self.addr), socket.inet_aton(ip))
+            mreq = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
             r.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
             # Sending socket
             tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
             tx.bind((interface, 0))
 
-            self.interfaces[interface] = {'addr': ip, 'mac': mac, 'netmask': netmask, 'tx': tx}
+            self.transmitters.append({'multicast': {'addr': addr, 'port': port}, 'interface': interface, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx})
 
-        r.bind((self.addr, self.port))
-        self.mcast_listen = r
+        r.bind((addr, port))
+        self.receivers.append(r)
 
     def loop(self):
         recentChecksums = []
         while True:
-            inputready, _, _ = select.select([self.mcast_listen], [], [])
+            inputready, _, _ = select.select(self.receivers, [], [])
             for s in inputready:
                 data, addr = s.recvfrom(10240)
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
                 # we know that we will see it once again on that interface.
-                ipChecksum = data[10:11]
+                #
+                # If we were retransmitting via a UDP socket then we could
+                # just disable IP_MULTICAST_LOOP but that won't work as we are
+                # using an RAW socket.
+                ipChecksum = data[10:12]
                 if ipChecksum in recentChecksums:
                     continue
                 recentChecksums.append(ipChecksum)
                 if len(recentChecksums) > 16:
                     recentChecksums = recentChecksums[1:]
 
-                receivingInterface = 'unknown'
-                for interface in self.interfaces:
-                    if self.onNetwork(addr[0], self.interfaces[interface]['addr'], self.interfaces[interface]['netmask']):
-                        receivingInterface = interface
+                maddr = socket.inet_ntoa(data[16:20])
+                ipHeader = (struct.unpack('B', data[0])[0] & 0x0f) * 4
+                mport = struct.unpack('!h', data[ipHeader+2:ipHeader+4])[0]
 
-                for interface in self.interfaces:
+                receivingInterface = 'unknown'
+                for tx in self.transmitters:
+                    if maddr == tx['multicast']['addr'] and mport == tx['multicast']['port'] and self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                        receivingInterface = tx['interface']
+
+                for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this multicast packet from...
-                    if not self.onNetwork(addr[0], self.interfaces[interface]['addr'], self.interfaces[interface]['netmask']):
-                        packet = self.mac+self.interfaces[interface]['mac']+self.ethertype+data
-                        self.interfaces[interface]['tx'].send(packet)
+                    if maddr == tx['multicast']['addr'] and mport == tx['multicast']['port'] and not self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                        packet = self.mac + tx['mac'] + self.ethertype+data
+                        tx['socket'].send(packet)
                         if self.verbose:
-                            log().info('Relayed %s byte%s from %s on %s to %s via %s.' % (len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, interface, self.interfaces[interface]['addr']))
+                            log().info('Relayed %s byte%s from %s on %s to %s:%s via %s/%s.' % (len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, maddr, mport, tx['interface'], tx['addr']))
 
     @staticmethod
     def getInterface(ifname):
@@ -106,15 +117,19 @@ class SSDP():
         Given an IP address and a network/netmask tuple, work out
         if that IP address is on that network.
         """
-        ipL = SSDP.ip2long(ip)
-        networkL = SSDP.ip2long(network)
-        netmaskL = SSDP.ip2long(netmask)
+        ipL = MulticastRelay.ip2long(ip)
+        networkL = MulticastRelay.ip2long(network)
+        netmaskL = MulticastRelay.ip2long(netmask)
         return (ipL & netmaskL) == (networkL & netmaskL)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
                         help='Relay between interfaces.')
+    parser.add_argument('--noMDNS', action='store_true',
+                        help='Do not relay mDNS packets.')
+    parser.add_argument('--noSSDP', action='store_true',
+                        help='Do not relay SSDP packets.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--verbose', action='store_true',
@@ -147,8 +162,12 @@ def main():
     else:
         logger.setLevel(logging.WARN)
 
-    ssdp = SSDP(args.interfaces, args.verbose)
-    ssdp.loop()
+    mr = MulticastRelay(args.interfaces, args.verbose)
+    if not args.noMDNS:
+        mr.addListener('224.0.0.251', 5353)
+    if not args.noSSDP:
+        mr.addListener('239.255.255.250', 1900)
+    mr.loop()
 
 if __name__ == '__main__':
     sys.exit(main())
