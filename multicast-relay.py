@@ -125,9 +125,9 @@ class MulticastRelay():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
-                        help='Relay between interfaces.')
+                        help='Relay between these interfaces (minimum 2).')
     parser.add_argument('--relay', nargs='*',
-                        help='Relay between interfaces.')
+                        help='Relay additional multicast address(es).')
     parser.add_argument('--noMDNS', action='store_true',
                         help='Do not relay mDNS packets.')
     parser.add_argument('--noSSDP', action='store_true',
