@@ -184,7 +184,7 @@ def main():
             log().warning('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
             return 1
 
-        if ip < MulticastRelay.ip2long('224.0.0.0') or ip >= MulticastRelay.ip2long('239.255.255.255'):
+        if ip < MulticastRelay.ip2long('224.0.0.0') or ip > MulticastRelay.ip2long('239.255.255.255'):
             log().warning('IP address %s not a multicast address' % addr)
             return 1
         if port < 0 or port > 65535:
