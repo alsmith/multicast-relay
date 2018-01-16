@@ -100,8 +100,8 @@ class MulticastRelay():
             netmask = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x891b, arg)[20:24])
             return (mac, ip, netmask)
         except IOError:
-            print 'Error getting information about interface %s' % ifname
-            sys.exit(1)
+            print 'Error getting information about interface %s.' % ifname
+            raise
 
     @staticmethod
     def ip2long(ip):
