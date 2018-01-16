@@ -93,11 +93,10 @@ class MulticastRelay():
         """
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            if sys.version_info < (3,):
-                ifstring = ifname[:15]
-            else:
-                ifstring = bytes(ifname[:15], 'ascii')
-            arg = struct.pack('256s', ifstring)
+            # For Python3 users, explicitly convert to a bytes object.
+            if not isinstance(ifname, bytes):
+                ifname = ifname.encode('utf8')
+            arg = struct.pack('256s', ifname[:15])
 
             mac = fcntl.ioctl(s.fileno(), 0x8927, arg)[18:24]
             ip = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, arg)[20:24])
