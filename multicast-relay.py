@@ -100,7 +100,7 @@ class MulticastRelay():
             netmask = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x891b, arg)[20:24])
             return (mac, ip, netmask)
         except IOError:
-            print 'Error getting information about interface %s.' % ifname
+            print('Error getting information about interface %s.' % ifname)
             raise
 
     @staticmethod
@@ -139,7 +139,7 @@ def main():
     args = parser.parse_args()
 
     if len(args.interfaces) < 2:
-        print 'You should specify at least two interfaces to relay between'
+        print('You should specify at least two interfaces to relay between')
         return 1
 
     if not args.foreground:
