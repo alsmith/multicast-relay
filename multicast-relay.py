@@ -101,6 +101,7 @@ class MulticastRelay():
             return (binascii.unhexlify(mac.replace(':', '')), ip, netmask)
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
+            print('Valid interfaces: %s' % ' '.join(netifaces.interfaces()))
             raise
 
     @staticmethod
