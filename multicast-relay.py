@@ -90,9 +90,14 @@ class MulticastRelay():
     @staticmethod
     def getInterface(ifname):
         try:
+            # These functions all return a value in string format.
             mac = netifaces.ifaddresses(ifname)[netifaces.AF_LINK][0]['addr']
             ip = netifaces.ifaddresses(ifname)[netifaces.AF_INET][0]['addr']
             netmask = netifaces.ifaddresses(ifname)[netifaces.AF_INET][0]['netmask']
+
+            # But our only use for a MAC address later is when we concoct a
+            # packet to send, and at that point we need as binary data. Lets
+            # do that conversion here.
             return (binascii.unhexlify(mac.replace(':', '')), ip, netmask)
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
