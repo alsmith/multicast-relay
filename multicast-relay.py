@@ -1,9 +1,11 @@
 #!/usr/bin/python
 
 import argparse
+import binascii
 import fcntl
 import logging
 import logging.handlers
+import netifaces
 import os
 import select
 import socket
@@ -87,22 +89,12 @@ class MulticastRelay():
 
     @staticmethod
     def getInterface(ifname):
-        """
-        Truly horrible way to get the interface addresses, given an interface name.
-        http://stackoverflow.com/questions/11735821/python-get-localhost-ip
-        """
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # For Python3 users, explicitly convert to a bytes object.
-            if not isinstance(ifname, bytes):
-                ifname = ifname.encode('utf8')
-            arg = struct.pack('256s', ifname[:15])
-
-            mac = fcntl.ioctl(s.fileno(), 0x8927, arg)[18:24]
-            ip = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, arg)[20:24])
-            netmask = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x891b, arg)[20:24])
-            return (mac, ip, netmask)
-        except IOError:
+            mac = netifaces.ifaddresses(ifname)[netifaces.AF_LINK][0]['addr']
+            ip = netifaces.ifaddresses(ifname)[netifaces.AF_INET][0]['addr']
+            netmask = netifaces.ifaddresses(ifname)[netifaces.AF_INET][0]['netmask']
+            return (binascii.unhexlify(mac.replace(':', '')), ip, netmask)
+        except Exception as e:
             print('Error getting information about interface %s.' % ifname)
             raise
 
