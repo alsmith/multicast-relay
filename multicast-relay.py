@@ -22,7 +22,6 @@ class MulticastRelay():
         self.transmitters = []
         self.receivers = []
 
-
     def addListener(self, addr, port):
         mac = 0x01005e000000
         mac |= self.ip2long(addr) & 0x7fffff
