@@ -70,7 +70,10 @@ class MulticastRelay():
                     recentChecksums = recentChecksums[1:]
 
                 maddr = socket.inet_ntoa(data[16:20])
-                ipHeader = (struct.unpack('B', data[0])[0] & 0x0f) * 4
+                ipHeaderByte = data[0]
+                if sys.version_info > (3, 0):
+                    ipHeaderByte = bytes([data[0]])
+                ipHeader = (struct.unpack('B', ipHeaderByte)[0] & 0x0f) * 4
                 mport = struct.unpack('!h', data[ipHeader+2:ipHeader+4])[0]
 
                 receivingInterface = 'unknown'
