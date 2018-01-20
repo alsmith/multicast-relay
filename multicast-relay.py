@@ -98,6 +98,10 @@ class MulticastRelay():
             ip = i[netifaces.AF_INET][0]['addr']
             netmask = i[netifaces.AF_INET][0]['netmask']
 
+            # If we've been given a virtual interface like eth0:0 then
+            # netifaces might not be able to detect its MAC address so
+            # lets at least try the parent interface and see if we can
+            # find a MAC address there.
             if netifaces.AF_LINK not in i and ifname.find(':') != -1:
                 i = netifaces.ifaddresses(ifname[:ifname.find(':')])
                 
