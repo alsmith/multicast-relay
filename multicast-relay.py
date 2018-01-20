@@ -87,22 +87,35 @@ class MulticastRelay():
                         if self.verbose:
                             log().info('Relayed %s byte%s from %s on %s to %s:%s via %s/%s.' % (len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, maddr, mport, tx['interface'], tx['addr']))
 
-    @staticmethod
-    def getInterface(ifname):
+    def getInterface(self, ifname):
         try:
-            # These functions all return a value in string format.
-            mac = netifaces.ifaddresses(ifname)[netifaces.AF_LINK][0]['addr']
-            ip = netifaces.ifaddresses(ifname)[netifaces.AF_INET][0]['addr']
-            netmask = netifaces.ifaddresses(ifname)[netifaces.AF_INET][0]['netmask']
+            i = netifaces.ifaddresses(ifname)
+            if netifaces.AF_INET not in i:
+                print('Interface %s does not have an IPv4 address configured.' % ifname)
+                sys.exit(1)
+            ip = i[netifaces.AF_INET][0]['addr']
+            netmask = i[netifaces.AF_INET][0]['netmask']
 
-            # But our only use for a MAC address later is when we concoct a
-            # packet to send, and at that point we need as binary data. Lets
-            # do that conversion here.
+            if netifaces.AF_LINK not in i and ifname.find(':') != -1:
+                i = netifaces.ifaddresses(ifname[:ifname.find(':')])
+                
+            if netifaces.AF_LINK not in i:
+                print('Unable to detect MAC address for interface %s.' % ifname)
+                sys.exit(1)
+
+            mac = i[netifaces.AF_LINK][0]['addr']
+
+            # These functions all return a value in string format, but our
+            # only use for a MAC address later is when we concoct a packet
+            # to send, and at that point we need as binary data. Lets do
+            # that conversion here.
             return (binascii.unhexlify(mac.replace(':', '')), ip, netmask)
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
             print('Valid interfaces: %s' % ' '.join(netifaces.interfaces()))
-            raise
+            if self.verbose:
+                raise
+            sys.exit(1)
 
     @staticmethod
     def ip2long(ip):
