@@ -32,6 +32,9 @@ flag also encourages logging to stdout as well as to the syslog.
 
 --verbose steps up the logging.
 
+multicast-relay.py requires the python 'netifaces' package. Install via
+'easy_install netifaces' or 'pip install netifaces'. For ZeroShell users,
+please review README-ZeroShell.md for further instructions.
 
 Al Smith <ajs@aeschi.eu>
 

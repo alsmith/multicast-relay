@@ -1,9 +1,11 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import argparse
+import binascii
 import fcntl
 import logging
 import logging.handlers
+import netifaces
 import os
 import select
 import socket
@@ -19,7 +21,6 @@ class MulticastRelay():
         self.verbose = verbose
         self.transmitters = []
         self.receivers = []
-
 
     def addListener(self, addr, port):
         mac = 0x01005e000000
@@ -69,7 +70,10 @@ class MulticastRelay():
                     recentChecksums = recentChecksums[1:]
 
                 maddr = socket.inet_ntoa(data[16:20])
-                ipHeader = (struct.unpack('B', data[0])[0] & 0x0f) * 4
+                ipHeaderByte = data[0]
+                if sys.version_info > (3, 0):
+                    ipHeaderByte = bytes([data[0]])
+                ipHeader = (struct.unpack('B', ipHeaderByte)[0] & 0x0f) * 4
                 mport = struct.unpack('!h', data[ipHeader+2:ipHeader+4])[0]
 
                 receivingInterface = 'unknown'
@@ -85,26 +89,39 @@ class MulticastRelay():
                         if self.verbose:
                             log().info('Relayed %s byte%s from %s on %s to %s:%s via %s/%s.' % (len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, maddr, mport, tx['interface'], tx['addr']))
 
-    @staticmethod
-    def getInterface(ifname):
-        """
-        Truly horrible way to get the interface addresses, given an interface name.
-        http://stackoverflow.com/questions/11735821/python-get-localhost-ip
-        """
+    def getInterface(self, ifname):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # For Python3 users, explicitly convert to a bytes object.
-            if not isinstance(ifname, bytes):
-                ifname = ifname.encode('utf8')
-            arg = struct.pack('256s', ifname[:15])
+            i = netifaces.ifaddresses(ifname)
+            if netifaces.AF_INET not in i:
+                print('Interface %s does not have an IPv4 address configured.' % ifname)
+                sys.exit(1)
+            ip = i[netifaces.AF_INET][0]['addr']
+            netmask = i[netifaces.AF_INET][0]['netmask']
 
-            mac = fcntl.ioctl(s.fileno(), 0x8927, arg)[18:24]
-            ip = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, arg)[20:24])
-            netmask = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x891b, arg)[20:24])
-            return (mac, ip, netmask)
-        except IOError:
+            # If we've been given a virtual interface like eth0:0 then
+            # netifaces might not be able to detect its MAC address so
+            # lets at least try the parent interface and see if we can
+            # find a MAC address there.
+            if netifaces.AF_LINK not in i and ifname.find(':') != -1:
+                i = netifaces.ifaddresses(ifname[:ifname.find(':')])
+                
+            if netifaces.AF_LINK not in i:
+                print('Unable to detect MAC address for interface %s.' % ifname)
+                sys.exit(1)
+
+            mac = i[netifaces.AF_LINK][0]['addr']
+
+            # These functions all return a value in string format, but our
+            # only use for a MAC address later is when we concoct a packet
+            # to send, and at that point we need as binary data. Lets do
+            # that conversion here.
+            return (binascii.unhexlify(mac.replace(':', '')), ip, netmask)
+        except Exception as e:
             print('Error getting information about interface %s.' % ifname)
-            raise
+            print('Valid interfaces: %s' % ' '.join(netifaces.interfaces()))
+            if self.verbose:
+                raise
+            sys.exit(1)
 
     @staticmethod
     def ip2long(ip):
