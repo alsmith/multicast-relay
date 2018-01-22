@@ -28,7 +28,7 @@ class MulticastRelay():
         self.etherAddrs = {}
         self.etherType = struct.pack('!h', 0x0800)
 
-    def addListener(self, addr, port):
+    def addListener(self, addr, port, service):
         # Compute the MAC address that we will use to send
         # packets out to. Multicast MACs are derived from
         # the multicast IP address.
@@ -54,7 +54,7 @@ class MulticastRelay():
             tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
             tx.bind((interface, 0))
 
-            self.transmitters.append({'multicast': {'addr': addr, 'port': port}, 'interface': interface, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx})
+            self.transmitters.append({'multicast': {'addr': addr, 'port': port}, 'interface': interface, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
 
         rx.bind((addr, port))
         self.receivers.append(rx)
@@ -105,7 +105,7 @@ class MulticastRelay():
                         packet = self.etherAddrs[multicastAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
                         if self.verbose:
-                            log().info('Relayed %s byte%s from %s on %s to %s:%s via %s/%s.' % (len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, multicastAddress, multicastPort, tx['interface'], tx['addr']))
+                            log().info('%sRelayed %s byte%s from %s on %s to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, multicastAddress, multicastPort, tx['interface'], tx['addr']))
 
     def getInterface(self, ifname):
         try:
@@ -204,33 +204,33 @@ def main():
 
     relays = set()
     if not args.noMDNS:
-        relays.add('224.0.0.251:5353')
+        relays.add(('224.0.0.251:5353', 'mDNS'))
     if not args.noSSDP:
-        relays.add('239.255.255.250:1900')
+        relays.add(('239.255.255.250:1900', 'SSDP'))
 
     if args.relay:
         for relay in args.relay:
-            relays.add(relay)
+            relays.add((relay, None))
 
     multicastRelay = MulticastRelay(args.interfaces, args.verbose)
     for relay in relays:
         try:
-            (addr, port) = relay.split(':')
+            (addr, port) = relay[0].split(':')
             ip = MulticastRelay.ip2long(addr)
             port = int(port)
         except:
-            log().warning('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
+            print('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
             return 1
 
         if ip < MulticastRelay.ip2long('224.0.0.0') or ip > MulticastRelay.ip2long('239.255.255.255'):
-            log().warning('IP address %s not a multicast address' % addr)
+            print('IP address %s not a multicast address' % addr)
             return 1
         if port < 0 or port > 65535:
-            log().warning('UDP port %s out of range' % port)
+            print('UDP port %s out of range' % port)
             return 1
 
-        log().info('Adding multicast relay for %s:%s' % (addr, port))
-        multicastRelay.addListener(addr, port)
+        log().info('Adding multicast relay for %s:%s%s' % (addr, port, relay[1] and ' (%s)' % relay[1] or ''))
+        multicastRelay.addListener(addr, port, relay[1])
     multicastRelay.loop()
 
 if __name__ == '__main__':
