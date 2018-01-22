@@ -12,6 +12,9 @@ import socket
 import struct
 import sys
 
+# Al Smith <ajs@aeschi.eu> January 2018
+# https://github.com/alsmith/multicast-relay
+
 def log():
     return logging.getLogger(__file__)
 
