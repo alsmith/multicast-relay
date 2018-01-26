@@ -11,6 +11,7 @@ import select
 import socket
 import struct
 import sys
+import time
 
 # Al Smith <ajs@aeschi.eu> January 2018
 # https://github.com/alsmith/multicast-relay
@@ -19,9 +20,10 @@ def log():
     return logging.getLogger(__file__)
 
 class MulticastRelay():
-    def __init__(self, interfaces, verbose):
+    def __init__(self, interfaces, verbose, waitForIP):
         self.interfaces = interfaces
         self.verbose = verbose
+        self.wait = waitForIP
 
         self.transmitters = []
         self.receivers = []
@@ -108,11 +110,24 @@ class MulticastRelay():
                             log().info('%sRelayed %s byte%s from %s on %s to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, multicastAddress, multicastPort, tx['interface'], tx['addr']))
 
     def getInterface(self, ifname):
+        if ifname not in netifaces.interfaces():
+            print('Interface %s does not exist.' % ifname)
+            sys.exit(1)
+
         try:
-            i = netifaces.ifaddresses(ifname)
-            if netifaces.AF_INET not in i:
-                print('Interface %s does not have an IPv4 address configured.' % ifname)
-                sys.exit(1)
+            # Here we want to make sure that an interface has an
+            # IPv4 address - but if we are running at boot time
+            # it might be that we don't yet have an address assigned.
+            while True:
+                i = netifaces.ifaddresses(ifname)
+                if netifaces.AF_INET in i:
+                    break
+                if not self.wait:
+                    print('Interface %s does not have an IPv4 address assigned.' % ifname)
+                    sys.exit(1)
+                log().info('Waiting for IPv4 address on %s' % ifname)
+                time.sleep(1)
+
             ip = i[netifaces.AF_INET][0]['addr']
             netmask = i[netifaces.AF_INET][0]['netmask']
 
@@ -170,6 +185,8 @@ def main():
                         help='Do not relay mDNS packets.')
     parser.add_argument('--noSSDP', action='store_true',
                         help='Do not relay SSDP packets.')
+    parser.add_argument('--wait', action='store_true',
+                        help='Wait for IPv4 address assignment.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--verbose', action='store_true',
@@ -212,7 +229,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    multicastRelay = MulticastRelay(args.interfaces, args.verbose)
+    multicastRelay = MulticastRelay(args.interfaces, args.verbose, args.wait)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
