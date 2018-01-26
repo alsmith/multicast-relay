@@ -27,6 +27,10 @@ relay between.
 
 --noSSDP disables SSDP relaying.
 
+--wait indicates that the relay should wait for an IPv4 address to be assigned
+to each interface rather than bailing immediately if an interface is yet to be
+assigned an address.
+
 --foreground stops the process forking itself off into the background. This
 flag also encourages logging to stdout as well as to the syslog.
 
