@@ -16,7 +16,7 @@ that IP forwarding is enabled (echo 1 > /proc/sys/net/ipv4/ip_forward) and
 that no firewalling is in place that would prevent connections being
 established.
 
-usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay MULTICAST:PORT [MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--foreground] [--verbose]
+usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay MULTICAST:PORT [MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--wait] [--foreground] [--verbose]
 
 --interfaces specifies the >= 2 interfaces that you desire to listen to and
 relay between.
