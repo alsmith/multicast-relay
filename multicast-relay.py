@@ -20,10 +20,11 @@ def log():
     return logging.getLogger(__file__)
 
 class MulticastRelay():
-    def __init__(self, interfaces, verbose, waitForIP):
+    def __init__(self, interfaces, verbose, waitForIP, ttl=None):
         self.interfaces = interfaces
         self.verbose = verbose
         self.wait = waitForIP
+        self.ttl = ttl
 
         self.transmitters = []
         self.receivers = []
@@ -75,6 +76,14 @@ class MulticastRelay():
                 # If we were retransmitting via a UDP socket then we could
                 # just disable IP_MULTICAST_LOOP but that won't work as we are
                 # using an RAW socket.
+                eighthDataByte = data[8]
+                if sys.version_info > (3, 0):
+                    eighthDataByte = bytes([data[8]])
+                ttl = struct.unpack('B', eighthDataByte)[0]
+
+                if self.ttl:
+                    data = data[:8] + struct.pack('B', self.ttl) + data[9:]
+
                 ipChecksum = data[10:12]
                 if ipChecksum in recentChecksums:
                     continue
@@ -107,7 +116,7 @@ class MulticastRelay():
                         packet = self.etherAddrs[multicastAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
                         if self.verbose:
-                            log().info('%sRelayed %s byte%s from %s on %s to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, multicastAddress, multicastPort, tx['interface'], tx['addr']))
+                            log().info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, multicastAddress, multicastPort, tx['interface'], tx['addr']))
 
     def getInterface(self, ifname):
         if ifname not in netifaces.interfaces():
@@ -187,6 +196,8 @@ def main():
                         help='Do not relay SSDP packets.')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
+    parser.add_argument('--ttl', type=int,
+                        help='Set TTL on outbound packets.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--verbose', action='store_true',
@@ -195,6 +206,10 @@ def main():
 
     if len(args.interfaces) < 2:
         print('You should specify at least two interfaces to relay between')
+        return 1
+
+    if args.ttl and (args.ttl < 0 or args.ttl > 255):
+        print('Invalid TTL (must be between 1 and 255)')
         return 1
 
     if not args.foreground:
@@ -229,7 +244,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    multicastRelay = MulticastRelay(args.interfaces, args.verbose, args.wait)
+    multicastRelay = MulticastRelay(args.interfaces, args.verbose, args.wait, args.ttl)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
