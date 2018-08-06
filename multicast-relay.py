@@ -19,7 +19,7 @@ import time
 def log():
     return logging.getLogger(__file__)
 
-class MulticastRelay():
+class PacketRelay():
     def __init__(self, interfaces, verbose, waitForIP, ttl=None):
         self.interfaces = interfaces
         self.verbose = verbose
@@ -31,14 +31,8 @@ class MulticastRelay():
         self.etherAddrs = {}
         self.etherType = struct.pack('!h', 0x0800)
 
-    def addListener(self, addr, port, service):
-        # Compute the MAC address that we will use to send
-        # packets out to. Multicast MACs are derived from
-        # the multicast IP address.
-        multicastMac = 0x01005e000000
-        multicastMac |= self.ip2long(addr) & 0x7fffff
-        multicastMac = struct.pack('!Q', multicastMac)[2:]
-        self.etherAddrs[addr] = multicastMac
+    def addListener(self, addr, port, service, ipToMac):
+        self.etherAddrs[addr] = ipToMac(addr)
 
         # Set up the receiving socket and corresponding IP and interface information.
         # One receiving socket is required per multicast address.
@@ -48,16 +42,19 @@ class MulticastRelay():
         for interface in self.interfaces:
             (mac, ip, netmask) = self.getInterface(interface)
 
-            # Add this interface to the receiving socket's list.
-            packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
-            rx.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, packedAddress)
+            if ipToMac == PacketRelay.multicastIpToMac:
+                # Add this interface to the receiving socket's list.
+                packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
+                rx.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, packedAddress)
+            elif ipToMac == PacketRelay.broadcastIpToMac:
+                rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-            # Also generate a transmitter socket. Each interface
+            # Generate a transmitter socket. Each interface
             # requires its own transmitting socket.
             tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
             tx.bind((interface, 0))
 
-            self.transmitters.append({'multicast': {'addr': addr, 'port': port}, 'interface': interface, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
+            self.transmitters.append({'relay': {'addr': addr, 'port': port}, 'interface': interface, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
 
         rx.bind((addr, port))
         self.receivers.append(rx)
@@ -91,32 +88,31 @@ class MulticastRelay():
                 if len(recentChecksums) > 256:
                     recentChecksums = recentChecksums[1:]
 
-                multicastAddress = socket.inet_ntoa(data[16:20])
+                destinationAddress = socket.inet_ntoa(data[16:20])
 
-                # Compute the length of the IP header so that we can then move
-                # past it and delve into the UDP packet to find out what multicastPort
+                # Compute the length of the IP header so that we can then move past
+                # it and delve into the UDP packet to find out what destination port
                 # this packet was sent to. The length is encoded in the first least
                 # significant nybble of the IP packet and is specified in nybbles.
                 firstDataByte = data[0]
                 if sys.version_info > (3, 0):
                     firstDataByte = bytes([data[0]])
                 ipHeaderLength = (struct.unpack('B', firstDataByte)[0] & 0x0f) * 4
-                multicastPort = struct.unpack('!h', data[ipHeaderLength+2:ipHeaderLength+4])[0]
+                destinationPort = struct.unpack('!h', data[ipHeaderLength+2:ipHeaderLength+4])[0]
 
-                # Work out the name of the interface we received the packet
-                # on.
+                # Work out the name of the interface we received the packet on.
                 receivingInterface = 'unknown'
                 for tx in self.transmitters:
-                    if multicastAddress == tx['multicast']['addr'] and multicastPort == tx['multicast']['port'] and self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                    if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and self.onNetwork(addr[0], tx['addr'], tx['netmask']):
                         receivingInterface = tx['interface']
 
                 for tx in self.transmitters:
-                    # Re-transmit on all other interfaces than on the interface that we received this multicast packet from...
-                    if multicastAddress == tx['multicast']['addr'] and multicastPort == tx['multicast']['port'] and not self.onNetwork(addr[0], tx['addr'], tx['netmask']):
-                        packet = self.etherAddrs[multicastAddress] + tx['mac'] + self.etherType + data
+                    # Re-transmit on all other interfaces than on the interface that we received this packet from...
+                    if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and not self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                        packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
                         if self.verbose:
-                            log().info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, multicastAddress, multicastPort, tx['interface'], tx['addr']))
+                            log().info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
 
     def getInterface(self, ifname):
         if ifname not in netifaces.interfaces():
@@ -146,7 +142,7 @@ class MulticastRelay():
             # find a MAC address there.
             if netifaces.AF_LINK not in i and ifname.find(':') != -1:
                 i = netifaces.ifaddresses(ifname[:ifname.find(':')])
-                
+
             if netifaces.AF_LINK not in i:
                 print('Unable to detect MAC address for interface %s.' % ifname)
                 sys.exit(1)
@@ -179,10 +175,24 @@ class MulticastRelay():
         Given an IP address and a network/netmask tuple, work out
         if that IP address is on that network.
         """
-        ipL = MulticastRelay.ip2long(ip)
-        networkL = MulticastRelay.ip2long(network)
-        netmaskL = MulticastRelay.ip2long(netmask)
+        ipL = PacketRelay.ip2long(ip)
+        networkL = PacketRelay.ip2long(network)
+        netmaskL = PacketRelay.ip2long(netmask)
         return (ipL & netmaskL) == (networkL & netmaskL)
+
+    @staticmethod
+    def multicastIpToMac(addr):
+        # Compute the MAC address that we will use to send
+        # packets out to. Multicast MACs are derived from
+        # the multicast IP address.
+        multicastMac = 0x01005e000000
+        multicastMac |= PacketRelay.ip2long(addr) & 0x7fffff
+        return struct.pack('!Q', multicastMac)[2:]
+
+    @staticmethod
+    def broadcastIpToMac(addr):
+        broadcastMac = 0xffffffffffff
+        return struct.pack('!Q', broadcastMac)[2:]
 
 def main():
     parser = argparse.ArgumentParser()
@@ -194,6 +204,8 @@ def main():
                         help='Do not relay mDNS packets.')
     parser.add_argument('--noSSDP', action='store_true',
                         help='Do not relay SSDP packets.')
+    parser.add_argument('--noSonosDiscovery', action='store_true',
+                        help='Do not relay broadcast Sonos discovery packets.')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
@@ -244,26 +256,41 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    multicastRelay = MulticastRelay(args.interfaces, args.verbose, args.wait, args.ttl)
+    packetRelay = PacketRelay(args.interfaces, args.verbose, args.wait, args.ttl)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
-            ip = MulticastRelay.ip2long(addr)
+            ip = PacketRelay.ip2long(addr)
             port = int(port)
         except:
-            print('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
+            if args.foreground:
+                print('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
+            else:
+                log().warning('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
             return 1
 
-        if ip < MulticastRelay.ip2long('224.0.0.0') or ip > MulticastRelay.ip2long('239.255.255.255'):
-            print('IP address %s not a multicast address' % addr)
+        if ip < PacketRelay.ip2long('224.0.0.0') or ip > PacketRelay.ip2long('239.255.255.255'):
+            if args.foreground:
+                print('IP address %s not a multicast address' % addr)
+            else:
+                log().warning('IP address %s not a multicast address' % addr)
             return 1
         if port < 0 or port > 65535:
-            print('UDP port %s out of range' % port)
+            if args.foreground:
+                print('UDP port %s out of range' % port)
+            else:
+                log().warning('UDP port %s out of range' % port)
             return 1
 
         log().info('Adding multicast relay for %s:%s%s' % (addr, port, relay[1] and ' (%s)' % relay[1] or ''))
-        multicastRelay.addListener(addr, port, relay[1])
-    multicastRelay.loop()
+        packetRelay.addListener(addr, port, relay[1], packetRelay.multicastIpToMac)
+
+    if not args.noSonosDiscovery:
+        port = 6969
+        log().info('Adding broadcast relay for %s' % port)
+        packetRelay.addListener('255.255.255.255', port, 'Sonos Discovery', packetRelay.broadcastIpToMac)
+
+    packetRelay.loop()
 
 if __name__ == '__main__':
     sys.exit(main())
