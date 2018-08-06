@@ -31,8 +31,11 @@ class PacketRelay():
         self.etherAddrs = {}
         self.etherType = struct.pack('!h', 0x0800)
 
-    def addListener(self, addr, port, service, ipToMac):
-        self.etherAddrs[addr] = ipToMac(addr)
+    def addListener(self, addr, port, service):
+        if addr == '255.255.255.255':
+            self.etherAddrs[addr] = self.broadcastIpToMac(addr)
+        else:
+            self.etherAddrs[addr] = self.multicastIpToMac(addr)
 
         # Set up the receiving socket and corresponding IP and interface information.
         # One receiving socket is required per multicast address.
@@ -42,12 +45,12 @@ class PacketRelay():
         for interface in self.interfaces:
             (mac, ip, netmask) = self.getInterface(interface)
 
-            if ipToMac == PacketRelay.multicastIpToMac:
-                # Add this interface to the receiving socket's list.
+            # Add this interface to the receiving socket's list.
+            if addr == '255.255.255.255':
+                rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            else:
                 packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
                 rx.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, packedAddress)
-            elif ipToMac == PacketRelay.broadcastIpToMac:
-                rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
             # Generate a transmitter socket. Each interface
             # requires its own transmitting socket.
@@ -251,6 +254,8 @@ def main():
         relays.add(('224.0.0.251:5353', 'mDNS'))
     if not args.noSSDP:
         relays.add(('239.255.255.250:1900', 'SSDP'))
+    if not args.noSonosDiscovery:
+        relays.add(('255.255.255.255:6969', 'Sonos Discovery'))
 
     if args.relay:
         for relay in args.relay:
@@ -269,12 +274,17 @@ def main():
                 log().warning('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
             return 1
 
-        if ip < PacketRelay.ip2long('224.0.0.0') or ip > PacketRelay.ip2long('239.255.255.255'):
+        if ip >= PacketRelay.ip2long('224.0.0.0') and ip <= PacketRelay.ip2long('239.255.255.255'):
+            relayType = 'multicast'
+        elif ip == PacketRelay.ip2long('255.255.255.255'):
+            relayType = 'broadcast'
+        else:
             if args.foreground:
-                print('IP address %s not a multicast address' % addr)
+                print('IP address %s is neither a multicast nor a broadcast address' % addr)
             else:
-                log().warning('IP address %s not a multicast address' % addr)
+                log().warning('IP address %s is neither a multicast nor a broadcast address' % addr)
             return 1
+
         if port < 0 or port > 65535:
             if args.foreground:
                 print('UDP port %s out of range' % port)
@@ -282,13 +292,8 @@ def main():
                 log().warning('UDP port %s out of range' % port)
             return 1
 
-        log().info('Adding multicast relay for %s:%s%s' % (addr, port, relay[1] and ' (%s)' % relay[1] or ''))
-        packetRelay.addListener(addr, port, relay[1], packetRelay.multicastIpToMac)
-
-    if not args.noSonosDiscovery:
-        port = 6969
-        log().info('Adding broadcast relay for %s' % port)
-        packetRelay.addListener('255.255.255.255', port, 'Sonos Discovery', packetRelay.broadcastIpToMac)
+        log().info('Adding %s relay for %s:%s%s' % (relayType, addr, port, relay[1] and ' (%s)' % relay[1] or ''))
+        packetRelay.addListener(addr, port, relay[1])
 
     packetRelay.loop()
 
