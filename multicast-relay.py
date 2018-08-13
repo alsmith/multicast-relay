@@ -20,6 +20,10 @@ def log():
     return logging.getLogger(__file__)
 
 class PacketRelay():
+    MULTICAST_MIN = '224.0.0.0'
+    MULTICAST_MAX = '239.255.255.255'
+    BROADCAST     = '255.255.255.255'
+
     def __init__(self, interfaces, verbose, waitForIP, ttl=None):
         self.interfaces = interfaces
         self.verbose = verbose
@@ -32,7 +36,7 @@ class PacketRelay():
         self.etherType = struct.pack('!h', 0x0800)
 
     def addListener(self, addr, port, service):
-        if addr == '255.255.255.255':
+        if self.isBroadcast(addr):
             self.etherAddrs[addr] = self.broadcastIpToMac(addr)
         else:
             self.etherAddrs[addr] = self.multicastIpToMac(addr)
@@ -46,7 +50,7 @@ class PacketRelay():
             (mac, ip, netmask) = self.getInterface(interface)
 
             # Add this interface to the receiving socket's list.
-            if addr == '255.255.255.255':
+            if self.isBroadcast(addr):
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             else:
                 packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
@@ -165,6 +169,22 @@ class PacketRelay():
             sys.exit(1)
 
     @staticmethod
+    def isMulticast(ip):
+        """
+        Is this IP address a multicast address?
+        """
+        ipLong = PacketRelay.ip2long(ip)
+        return ipLong >= PacketRelay.ip2long(PacketRelay.MULTICAST_MIN) and ipLong <= PacketRelay.ip2long(PacketRelay.MULTICAST_MAX)
+
+    @staticmethod
+    def isBroadcast(ip):
+        """
+        Is this IP address a broadcast address?
+        """
+        ipLong = PacketRelay.ip2long(ip)
+        return ipLong == PacketRelay.ip2long(PacketRelay.BROADCAST)
+
+    @staticmethod
     def ip2long(ip):
         """
         Given an IP address (or netmask) turn it into an unsigned long.
@@ -251,11 +271,11 @@ def main():
 
     relays = set()
     if not args.noMDNS:
-        relays.add(('224.0.0.251:5353', 'mDNS'))
+        relays.add(('224.0.0.251:5353',            'mDNS'))
     if not args.noSSDP:
-        relays.add(('239.255.255.250:1900', 'SSDP'))
+        relays.add(('239.255.255.250:1900',        'SSDP'))
     if not args.noSonosDiscovery:
-        relays.add(('255.255.255.255:6969', 'Sonos Discovery'))
+        relays.add((PacketRelay.BROADCAST+':6969', 'Sonos Discovery'))
 
     if args.relay:
         for relay in args.relay:
@@ -265,31 +285,34 @@ def main():
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
-            ip = PacketRelay.ip2long(addr)
+            _ = PacketRelay.ip2long(addr)
             port = int(port)
         except:
+            errorMessage = '%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast or broadcast IP address and P is a valid port number' % relay
             if args.foreground:
-                print('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
+                print(errorMessage)
             else:
-                log().warning('%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast IP address and P is a valid port number' % relay)
+                log().warning(errorMessage)
             return 1
 
-        if ip >= PacketRelay.ip2long('224.0.0.0') and ip <= PacketRelay.ip2long('239.255.255.255'):
+        if PacketRelay.isMulticast(addr):
             relayType = 'multicast'
-        elif ip == PacketRelay.ip2long('255.255.255.255'):
+        elif PacketRelay.isBroadcast(addr):
             relayType = 'broadcast'
         else:
+            errorMessage = 'IP address %s is neither a multicast nor a broadcast address' % addr
             if args.foreground:
-                print('IP address %s is neither a multicast nor a broadcast address' % addr)
+                print(errorMessage)
             else:
-                log().warning('IP address %s is neither a multicast nor a broadcast address' % addr)
+                log().warning(errorMessage)
             return 1
 
         if port < 0 or port > 65535:
+            errorMessage = 'UDP port %s out of range' % port
             if args.foreground:
-                print('UDP port %s out of range' % port)
+                print(errorMessage)
             else:
-                log().warning('UDP port %s out of range' % port)
+                log().warning(errorMessage)
             return 1
 
         log().info('Adding %s relay for %s:%s%s' % (relayType, addr, port, relay[1] and ' (%s)' % relay[1] or ''))
