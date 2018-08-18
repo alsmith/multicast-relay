@@ -48,7 +48,6 @@ class PacketRelay():
         rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         for interface in self.interfaces:
-            print('%s' % str(self.getInterface(interface)))
             (ifname, mac, ip, netmask) = self.getInterface(interface)
 
             # Add this interface to the receiving socket's list.
