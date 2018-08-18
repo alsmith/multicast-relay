@@ -7,6 +7,7 @@ import logging
 import logging.handlers
 import netifaces
 import os
+import re
 import select
 import socket
 import struct
@@ -47,7 +48,8 @@ class PacketRelay():
         rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         for interface in self.interfaces:
-            (mac, ip, netmask) = self.getInterface(interface)
+            print('%s' % str(self.getInterface(interface)))
+            (ifname, mac, ip, netmask) = self.getInterface(interface)
 
             # Add this interface to the receiving socket's list.
             if self.isBroadcast(addr):
@@ -59,9 +61,9 @@ class PacketRelay():
             # Generate a transmitter socket. Each interface
             # requires its own transmitting socket.
             tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-            tx.bind((interface, 0))
+            tx.bind((ifname, 0))
 
-            self.transmitters.append({'relay': {'addr': addr, 'port': port}, 'interface': interface, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
+            self.transmitters.append({'relay': {'addr': addr, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
 
         rx.bind((addr, port))
         self.receivers.append(rx)
@@ -121,18 +123,50 @@ class PacketRelay():
                         if self.verbose:
                             log().info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
 
-    def getInterface(self, ifname):
-        if ifname not in netifaces.interfaces():
-            print('Interface %s does not exist.' % ifname)
+    def getInterface(self, interface):
+        ifname = None
+
+        # See if we got an interface name.
+        if interface in netifaces.interfaces():
+            ifname = interface
+
+        # Maybe we got an network/netmask combination?
+        elif re.match('\A\d+\.\d+\.\d+\.\d+\Z', interface):
+            for i in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(i)
+                if netifaces.AF_INET in addrs:
+                    if netifaces.AF_INET in addrs and interface == addrs[netifaces.AF_INET][0]['addr']:
+                        ifname = i
+                        break
+
+        # Or perhaps we got an IP address?
+        elif re.match('\A\d+\.\d+\.\d+\.\d+/\d+\Z', interface):
+            (network, netmask) = interface.split('/')
+            netmask = '.'.join([str((0xffffffff << (32 - int(netmask)) >> i) & 0xff) for i in [24, 16, 8, 0]])
+
+            for i in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(i)
+                if netifaces.AF_INET in addrs:
+                    if netifaces.AF_INET in addrs:
+                        ip = addrs[netifaces.AF_INET][0]['addr']
+                        if self.onNetwork(ip, network, netmask):
+                            ifname = i
+                            break
+
+        if not ifname:
+            print('Interface %s does not exist.' % interface)
             sys.exit(1)
 
         try:
             # Here we want to make sure that an interface has an
             # IPv4 address - but if we are running at boot time
             # it might be that we don't yet have an address assigned.
+            #
+            # --wait doesn't make sense in the situation where we
+            # look for an IP# or net/mask combination, of course.
             while True:
-                i = netifaces.ifaddresses(ifname)
-                if netifaces.AF_INET in i:
+                addrs = netifaces.ifaddresses(ifname)
+                if netifaces.AF_INET in addrs:
                     break
                 if not self.wait:
                     print('Interface %s does not have an IPv4 address assigned.' % ifname)
@@ -140,27 +174,27 @@ class PacketRelay():
                 log().info('Waiting for IPv4 address on %s' % ifname)
                 time.sleep(1)
 
-            ip = i[netifaces.AF_INET][0]['addr']
-            netmask = i[netifaces.AF_INET][0]['netmask']
+            ip = addrs[netifaces.AF_INET][0]['addr']
+            netmask = addrs[netifaces.AF_INET][0]['netmask']
 
             # If we've been given a virtual interface like eth0:0 then
             # netifaces might not be able to detect its MAC address so
             # lets at least try the parent interface and see if we can
             # find a MAC address there.
-            if netifaces.AF_LINK not in i and ifname.find(':') != -1:
-                i = netifaces.ifaddresses(ifname[:ifname.find(':')])
+            if netifaces.AF_LINK not in addrs and ifname.find(':') != -1:
+                addrs = netifaces.ifaddresses(ifname[:ifname.find(':')])
 
-            if netifaces.AF_LINK not in i:
+            if netifaces.AF_LINK not in addrs:
                 print('Unable to detect MAC address for interface %s.' % ifname)
                 sys.exit(1)
 
-            mac = i[netifaces.AF_LINK][0]['addr']
+            mac = addrs[netifaces.AF_LINK][0]['addr']
 
             # These functions all return a value in string format, but our
             # only use for a MAC address later is when we concoct a packet
             # to send, and at that point we need as binary data. Lets do
             # that conversion here.
-            return (binascii.unhexlify(mac.replace(':', '')), ip, netmask)
+            return (ifname, binascii.unhexlify(mac.replace(':', '')), ip, netmask)
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
             print('Valid interfaces: %s' % ' '.join(netifaces.interfaces()))

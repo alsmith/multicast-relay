@@ -24,7 +24,8 @@ established.
 usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--wait] [--foreground] [--verbose]
 
 --interfaces specifies the >= 2 interfaces that you desire to listen to and
-relay between.
+relay between. You can specify an interface by name, by IP address, or by
+network/netmask combination (e.g. 10.0.0.0/24 in the last case).
 
 --relay specifies additional broadcast or multicast addresses to relay.
 
@@ -47,6 +48,5 @@ multicast-relay.py requires the python 'netifaces' package. Install via
 'easy_install netifaces' or 'pip install netifaces'. For ZeroShell users,
 please review [README-ZeroShell](README-ZeroShell.md) for further instructions.
 
--- 
 Al Smith <ajs@aeschi.eu>
 
