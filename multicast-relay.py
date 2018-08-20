@@ -25,11 +25,12 @@ class PacketRelay():
     MULTICAST_MAX = '239.255.255.255'
     BROADCAST     = '255.255.255.255'
 
-    def __init__(self, interfaces, verbose, waitForIP, ttl=None):
+    def __init__(self, interfaces, verbose, waitForIP, ttl=None, one_interface=False):
         self.interfaces = interfaces
         self.verbose = verbose
         self.wait = waitForIP
         self.ttl = ttl
+        self.one_interface = one_interface
 
         self.transmitters = []
         self.receivers = []
@@ -116,7 +117,7 @@ class PacketRelay():
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
-                    if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and not self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                    if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and (self.one_interface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
                         packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
                         if self.verbose:
@@ -254,6 +255,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
                         help='Relay between these interfaces (minimum 2).')
+    parser.add_argument('--one_interface', action='store_true',
+                        help='Slightly dangerous: only one interface exists, connected to two networks')
     parser.add_argument('--relay', nargs='*',
                         help='Relay additional multicast address(es).')
     parser.add_argument('--noMDNS', action='store_true',
@@ -272,7 +275,7 @@ def main():
                         help='Enable verbose output.')
     args = parser.parse_args()
 
-    if len(args.interfaces) < 2:
+    if len(args.interfaces) < 2 and not args.one_interface:
         print('You should specify at least two interfaces to relay between')
         return 1
 
@@ -314,7 +317,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.verbose, args.wait, args.ttl)
+    packetRelay = PacketRelay(args.interfaces, args.verbose, args.wait, args.ttl, args.one_interface)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
