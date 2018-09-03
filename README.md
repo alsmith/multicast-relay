@@ -21,7 +21,7 @@ that IP forwarding is enabled (echo 1 > /proc/sys/net/ipv4/ip_forward) and
 that no firewalling is in place that would prevent connections being
 established.
 
-usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--wait] [--foreground] [--verbose]
+usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--oneInterface] [--homebrewNetifaces] [--wait] [--foreground] [--verbose]
 
 --interfaces specifies the >= 2 interfaces that you desire to listen to and
 relay between. You can specify an interface by name, by IP address, or by
@@ -34,6 +34,14 @@ network/netmask combination (e.g. 10.0.0.0/24 in the last case).
 --noSSDP disables SSDP relaying.
 
 --noSonosDiscovery disables broadcast udp/6969 relaying.
+
+--oneInterface support for one interface connected to two networks. Use with
+caution - watch out for packet storms (although the IP checksum list ought
+to still prevent such a thing from happening).
+
+--homebrewNetifaces attempt to use our own netifaces implementation, probably
+doesn't work on any other system than Linux but maybe useful for OpenWRT where
+it's rather tricky to compile up netifaces.
 
 --wait indicates that the relay should wait for an IPv4 address to be assigned
 to each interface rather than bailing immediately if an interface is yet to be

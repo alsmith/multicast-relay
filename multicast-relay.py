@@ -2,10 +2,8 @@
 
 import argparse
 import binascii
-import fcntl
 import logging
 import logging.handlers
-import netifaces
 import os
 import re
 import select
@@ -20,17 +18,68 @@ import time
 def log():
     return logging.getLogger(__file__)
 
+class Netifaces():
+    def __init__(self, homebrewNetifaces):
+        self.homebrewNetifaces = homebrewNetifaces
+        if self.homebrewNetifaces:
+            Netifaces.AF_LINK = 1
+            Netifaces.AF_INET = 2
+            self.interfaceAttrs = {}
+        else:
+            import netifaces
+            Netifaces.AF_LINK = netifaces.AF_LINK
+            Netifaces.AF_INET = netifaces.AF_INET
+
+    def interfaces(self):
+        if self.homebrewNetifaces:
+            import array
+            import fcntl
+
+            maxInterfaces = 128
+            bufsiz = maxInterfaces * 32
+            nullByte = b'\0'
+
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            ifNames = array.array('B', nullByte * bufsiz)
+            ifNameLen = struct.unpack('iL', fcntl.ioctl(
+                s.fileno(),
+                0x8912, # SIOCGIFCONF
+                struct.pack('iL', bufsiz, ifNames.buffer_info()[0])
+            ))[0]
+
+            ifNames = ifNames.tostring()
+            for i in range(0, ifNameLen, 40):
+                name      = ifNames[i:i+16].split(nullByte, 1)[0].decode()
+                ip        = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x8915, struct.pack('256s', str(name)))[20:24])
+                netmask   = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x891b, struct.pack('256s', str(name)))[20:24])
+                broadcast = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x8919, struct.pack('256s', str(name)))[20:24])
+                hwaddr    = ':'.join(['%02x' % ord(char) for char in fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x8927, struct.pack('256s', str(name)))[18:24]])
+                self.interfaceAttrs[name] = {Netifaces.AF_LINK: [{'addr': hwaddr}], Netifaces.AF_INET: [{'addr': ip, 'netmask': netmask, 'broadcast': broadcast}]}
+            return self.interfaceAttrs.keys()
+        else:
+            import netifaces
+            return netifaces.interfaces()
+
+    def ifaddresses(self, interface):
+        if self.homebrewNetifaces:
+            return self.interfaceAttrs[interface]
+        else:
+            import netifaces
+            return netifaces.ifaddresses(interface)
+
 class PacketRelay():
     MULTICAST_MIN = '224.0.0.0'
     MULTICAST_MAX = '239.255.255.255'
     BROADCAST     = '255.255.255.255'
 
-    def __init__(self, interfaces, verbose, waitForIP, ttl=None, one_interface=False):
+    def __init__(self, interfaces, verbose, waitForIP, ttl=None, oneInterface=False, homebrewNetifaces=False):
         self.interfaces = interfaces
         self.verbose = verbose
         self.wait = waitForIP
         self.ttl = ttl
-        self.one_interface = one_interface
+        self.oneInterface = oneInterface
+
+        self.nif = Netifaces(homebrewNetifaces)
 
         self.transmitters = []
         self.receivers = []
@@ -117,7 +166,7 @@ class PacketRelay():
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
-                    if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and (self.one_interface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
+                    if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
                         packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
                         if self.verbose:
@@ -127,15 +176,15 @@ class PacketRelay():
         ifname = None
 
         # See if we got an interface name.
-        if interface in netifaces.interfaces():
+        if interface in self.nif.interfaces():
             ifname = interface
 
         # Maybe we got an network/netmask combination?
         elif re.match('\A\d+\.\d+\.\d+\.\d+\Z', interface):
-            for i in netifaces.interfaces():
-                addrs = netifaces.ifaddresses(i)
-                if netifaces.AF_INET in addrs:
-                    if netifaces.AF_INET in addrs and interface == addrs[netifaces.AF_INET][0]['addr']:
+            for i in self.nif.interfaces():
+                addrs = self.nif.ifaddresses(i)
+                if self.nif.AF_INET in addrs:
+                    if self.nif.AF_INET in addrs and interface == addrs[self.nif.AF_INET][0]['addr']:
                         ifname = i
                         break
 
@@ -144,11 +193,11 @@ class PacketRelay():
             (network, netmask) = interface.split('/')
             netmask = '.'.join([str((0xffffffff << (32 - int(netmask)) >> i) & 0xff) for i in [24, 16, 8, 0]])
 
-            for i in netifaces.interfaces():
-                addrs = netifaces.ifaddresses(i)
-                if netifaces.AF_INET in addrs:
-                    if netifaces.AF_INET in addrs:
-                        ip = addrs[netifaces.AF_INET][0]['addr']
+            for i in self.nif.interfaces():
+                addrs = self.nif.ifaddresses(i)
+                if self.nif.AF_INET in addrs:
+                    if self.nif.AF_INET in addrs:
+                        ip = addrs[self.nif.AF_INET][0]['addr']
                         if self.onNetwork(ip, network, netmask):
                             ifname = i
                             break
@@ -165,8 +214,8 @@ class PacketRelay():
             # --wait doesn't make sense in the situation where we
             # look for an IP# or net/mask combination, of course.
             while True:
-                addrs = netifaces.ifaddresses(ifname)
-                if netifaces.AF_INET in addrs:
+                addrs = self.nif.ifaddresses(ifname)
+                if self.nif.AF_INET in addrs:
                     break
                 if not self.wait:
                     print('Interface %s does not have an IPv4 address assigned.' % ifname)
@@ -174,21 +223,21 @@ class PacketRelay():
                 log().info('Waiting for IPv4 address on %s' % ifname)
                 time.sleep(1)
 
-            ip = addrs[netifaces.AF_INET][0]['addr']
-            netmask = addrs[netifaces.AF_INET][0]['netmask']
+            ip = addrs[self.nif.AF_INET][0]['addr']
+            netmask = addrs[self.nif.AF_INET][0]['netmask']
 
             # If we've been given a virtual interface like eth0:0 then
             # netifaces might not be able to detect its MAC address so
             # lets at least try the parent interface and see if we can
             # find a MAC address there.
-            if netifaces.AF_LINK not in addrs and ifname.find(':') != -1:
-                addrs = netifaces.ifaddresses(ifname[:ifname.find(':')])
+            if self.nif.AF_LINK not in addrs and ifname.find(':') != -1:
+                addrs = self.nif.ifaddresses(ifname[:ifname.find(':')])
 
-            if netifaces.AF_LINK not in addrs:
+            if self.nif.AF_LINK not in addrs:
                 print('Unable to detect MAC address for interface %s.' % ifname)
                 sys.exit(1)
 
-            mac = addrs[netifaces.AF_LINK][0]['addr']
+            mac = addrs[self.nif.AF_LINK][0]['addr']
 
             # These functions all return a value in string format, but our
             # only use for a MAC address later is when we concoct a packet
@@ -197,7 +246,7 @@ class PacketRelay():
             return (ifname, binascii.unhexlify(mac.replace(':', '')), ip, netmask)
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
-            print('Valid interfaces: %s' % ' '.join(netifaces.interfaces()))
+            print('Valid interfaces: %s' % ' '.join(self.nif.interfaces()))
             if self.verbose:
                 raise
             sys.exit(1)
@@ -255,8 +304,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
                         help='Relay between these interfaces (minimum 2).')
-    parser.add_argument('--one_interface', action='store_true',
-                        help='Slightly dangerous: only one interface exists, connected to two networks')
+    parser.add_argument('--oneInterface', action='store_true',
+                        help='Slightly dangerous: only one interface exists, connected to two networks.')
     parser.add_argument('--relay', nargs='*',
                         help='Relay additional multicast address(es).')
     parser.add_argument('--noMDNS', action='store_true',
@@ -265,6 +314,8 @@ def main():
                         help='Do not relay SSDP packets.')
     parser.add_argument('--noSonosDiscovery', action='store_true',
                         help='Do not relay broadcast Sonos discovery packets.')
+    parser.add_argument('--homebrewNetifaces', action='store_true',
+                        help='Use self-contained netifaces-like package.')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
@@ -275,7 +326,7 @@ def main():
                         help='Enable verbose output.')
     args = parser.parse_args()
 
-    if len(args.interfaces) < 2 and not args.one_interface:
+    if len(args.interfaces) < 2 and not args.oneInterface:
         print('You should specify at least two interfaces to relay between')
         return 1
 
@@ -317,7 +368,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.verbose, args.wait, args.ttl, args.one_interface)
+    packetRelay = PacketRelay(args.interfaces, args.verbose, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
