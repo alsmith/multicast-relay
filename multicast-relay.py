@@ -55,8 +55,9 @@ class Logger():
             print(args, kwargs)
 
 class Netifaces():
-    def __init__(self, homebrewNetifaces):
+    def __init__(self, homebrewNetifaces, ifNameStructLen):
         self.homebrewNetifaces = homebrewNetifaces
+        self.ifNameStructLen = ifNameStructLen
         if self.homebrewNetifaces:
             Netifaces.AF_LINK = 1
             Netifaces.AF_INET = 2
@@ -72,7 +73,7 @@ class Netifaces():
             import fcntl
 
             maxInterfaces = 128
-            bufsiz = maxInterfaces * 32
+            bufsiz = maxInterfaces * 40
             nullByte = b'\0'
 
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -84,7 +85,7 @@ class Netifaces():
             ))[0]
 
             ifNames = ifNames.tostring()
-            for i in range(0, ifNameLen, 40):
+            for i in range(0, ifNameLen, self.ifNameStructLen):
                 name      = ifNames[i:i+16].split(nullByte, 1)[0].decode()
                 ip        = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x8915, struct.pack('256s', str(name)))[20:24])
                 netmask   = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x891b, struct.pack('256s', str(name)))[20:24])
@@ -108,13 +109,13 @@ class PacketRelay():
     MULTICAST_MAX = '239.255.255.255'
     BROADCAST     = '255.255.255.255'
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, logger):
         self.interfaces = interfaces
         self.wait = waitForIP
         self.ttl = ttl
         self.oneInterface = oneInterface
 
-        self.nif = Netifaces(homebrewNetifaces)
+        self.nif = Netifaces(homebrewNetifaces, ifNameStructLen)
         self.logger = logger
 
         self.transmitters = []
@@ -350,6 +351,8 @@ def main():
                         help='Do not relay broadcast Sonos discovery packets.')
     parser.add_argument('--homebrewNetifaces', action='store_true',
                         help='Use self-contained netifaces-like package.')
+    parser.add_argument('--ifNameStructLen', type=int, default=40,
+                        help='Help the self-contained netifaces work out its ifName struct length.')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
@@ -389,7 +392,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
