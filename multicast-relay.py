@@ -2,8 +2,6 @@
 
 import argparse
 import binascii
-import logging
-import logging.handlers
 import os
 import re
 import select
@@ -15,8 +13,46 @@ import time
 # Al Smith <ajs@aeschi.eu> January 2018
 # https://github.com/alsmith/multicast-relay
 
-def log():
-    return logging.getLogger(__file__)
+class Logger():
+    def __init__(self, foreground, verbose):
+        self.verbose = verbose
+
+        try:
+            import logging
+            import logging.handlers
+            self.loggingAvailable = True
+
+            logger = logging.getLogger()
+            syslog_handler = logging.handlers.SysLogHandler()
+            syslog_handler.setFormatter(logging.Formatter(fmt='%(name)s[%(process)d] %(levelname)s: %(message)s'))
+            logger.addHandler(syslog_handler)
+
+            if foreground:
+                stream_handler = logging.StreamHandler(sys.stdout)
+                stream_handler.setFormatter(logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%b-%d %H:%M:%S'))
+                logger.addHandler(stream_handler)
+
+            if verbose:
+                logger.setLevel(logging.INFO)
+            else:
+                logger.setLevel(logging.WARN)
+
+        except ImportError:
+            self.loggingAvailable = False
+
+    def info(self, *args, **kwargs):
+        if self.loggingAvailable:
+            import logging
+            logging.getLogger(__file__).info(*args, **kwargs)
+        elif self.verbose:
+            print(args, kwargs)
+
+    def warning(self, *args, **kwargs):
+        if self.loggingAvailable:
+            import logging
+            logging.getLogger(__file__).warning(*args, **kwargs)
+        else:
+            print(args, kwargs)
 
 class Netifaces():
     def __init__(self, homebrewNetifaces):
@@ -72,14 +108,14 @@ class PacketRelay():
     MULTICAST_MAX = '239.255.255.255'
     BROADCAST     = '255.255.255.255'
 
-    def __init__(self, interfaces, verbose, waitForIP, ttl=None, oneInterface=False, homebrewNetifaces=False):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, logger):
         self.interfaces = interfaces
-        self.verbose = verbose
         self.wait = waitForIP
         self.ttl = ttl
         self.oneInterface = oneInterface
 
         self.nif = Netifaces(homebrewNetifaces)
+        self.logger = logger
 
         self.transmitters = []
         self.receivers = []
@@ -169,8 +205,7 @@ class PacketRelay():
                     if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
                         packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
-                        if self.verbose:
-                            log().info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
+                        self.logger.info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
@@ -220,7 +255,7 @@ class PacketRelay():
                 if not self.wait:
                     print('Interface %s does not have an IPv4 address assigned.' % ifname)
                     sys.exit(1)
-                log().info('Waiting for IPv4 address on %s' % ifname)
+                self.logger.info('Waiting for IPv4 address on %s' % ifname)
                 time.sleep(1)
 
             ip = addrs[self.nif.AF_INET][0]['addr']
@@ -247,8 +282,7 @@ class PacketRelay():
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
             print('Valid interfaces: %s' % ' '.join(self.nif.interfaces()))
-            if self.verbose:
-                raise
+            self.logger.info(str(e))
             sys.exit(1)
 
     @staticmethod
@@ -341,20 +375,7 @@ def main():
         os.setsid()
         os.close(sys.stdin.fileno())
 
-    logger = logging.getLogger()
-    syslog_handler = logging.handlers.SysLogHandler()
-    syslog_handler.setFormatter(logging.Formatter(fmt='%(name)s[%(process)d] %(levelname)s: %(message)s'))
-    logger.addHandler(syslog_handler)
-
-    if args.foreground:
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%b-%d %H:%M:%S'))
-        logger.addHandler(stream_handler)
-
-    if args.verbose:
-        logger.setLevel(logging.INFO)
-    else:
-        logger.setLevel(logging.WARN)
+    logger = Logger(args.foreground, args.verbose)
 
     relays = set()
     if not args.noMDNS:
@@ -368,7 +389,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.verbose, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
@@ -379,7 +400,7 @@ def main():
             if args.foreground:
                 print(errorMessage)
             else:
-                log().warning(errorMessage)
+                logger.warning(errorMessage)
             return 1
 
         if PacketRelay.isMulticast(addr):
@@ -391,7 +412,7 @@ def main():
             if args.foreground:
                 print(errorMessage)
             else:
-                log().warning(errorMessage)
+                logger.warning(errorMessage)
             return 1
 
         if port < 0 or port > 65535:
@@ -399,10 +420,10 @@ def main():
             if args.foreground:
                 print(errorMessage)
             else:
-                log().warning(errorMessage)
+                logger.warning(errorMessage)
             return 1
 
-        log().info('Adding %s relay for %s:%s%s' % (relayType, addr, port, relay[1] and ' (%s)' % relay[1] or ''))
+        logger.info('Adding %s relay for %s:%s%s' % (relayType, addr, port, relay[1] and ' (%s)' % relay[1] or ''))
         packetRelay.addListener(addr, port, relay[1])
 
     packetRelay.loop()
