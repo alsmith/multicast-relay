@@ -43,6 +43,8 @@ to still prevent such a thing from happening).
 doesn't work on any other system than Linux but maybe useful for OpenWRT where
 it's rather tricky to compile up netifaces.
 
+--allowNonEther supports non-ethernet interfaces to be relayed [experimental].
+
 --wait indicates that the relay should wait for an IPv4 address to be assigned
 to each interface rather than bailing immediately if an interface is yet to be
 assigned an address.

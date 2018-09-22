@@ -116,11 +116,12 @@ class PacketRelay():
     MULTICAST_MAX = '239.255.255.255'
     BROADCAST     = '255.255.255.255'
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, logger):
         self.interfaces = interfaces
         self.wait = waitForIP
         self.ttl = ttl
         self.oneInterface = oneInterface
+        self.allowNonEther = allowNonEther
 
         self.nif = Netifaces(homebrewNetifaces, ifNameStructLen)
         self.logger = logger
@@ -276,11 +277,13 @@ class PacketRelay():
             if self.nif.AF_LINK not in addrs and ifname.find(':') != -1:
                 addrs = self.nif.ifaddresses(ifname[:ifname.find(':')])
 
-            if self.nif.AF_LINK not in addrs:
+            if self.nif.AF_LINK in addrs:
+                mac = addrs[self.nif.AF_LINK][0]['addr']
+            elif self.allowNonEther:
+                mac = '00:00:00:00:00:00'
+            else:
                 print('Unable to detect MAC address for interface %s.' % ifname)
                 sys.exit(1)
-
-            mac = addrs[self.nif.AF_LINK][0]['addr']
 
             # These functions all return a value in string format, but our
             # only use for a MAC address later is when we concoct a packet
@@ -360,6 +363,8 @@ def main():
                         help='Use self-contained netifaces-like package.')
     parser.add_argument('--ifNameStructLen', type=int, default=40,
                         help='Help the self-contained netifaces work out its ifName struct length.')
+    parser.add_argument('--allowNonEther', action='store_true',
+                        help='Allow non-ethernet interfaces to be configured.')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
@@ -399,7 +404,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
