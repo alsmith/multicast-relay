@@ -85,14 +85,14 @@ class Netifaces():
             ))[0]
 
             if ifNameLen % self.ifNameStructLen != 0:
-                print 'Do you need to set --ifNameStructLen? %s/%s ought to have a remainder of zero.' % (ifNameLen, self.ifNameStructLen)
+                print('Do you need to set --ifNameStructLen? %s/%s ought to have a remainder of zero.' % (ifNameLen, self.ifNameStructLen))
                 sys.exit(1)
 
             ifNames = ifNames.tostring()
             for i in range(0, ifNameLen, self.ifNameStructLen):
                 name      = ifNames[i:i+16].split(nullByte, 1)[0].decode()
                 if not name:
-                    print 'Cannot determine interface name: do you need to set --ifNameStructLen? %s/%s ought to have a remainder of zero.' % (ifNameLen, self.ifNameStructLen)
+                    print('Cannot determine interface name: do you need to set --ifNameStructLen? %s/%s ought to have a remainder of zero.' % (ifNameLen, self.ifNameStructLen))
                     sys.exit(1)
                 ip        = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x8915, struct.pack('256s', str(name)))[20:24])
                 netmask   = socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 0x891b, struct.pack('256s', str(name)))[20:24])
