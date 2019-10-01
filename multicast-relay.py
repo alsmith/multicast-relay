@@ -119,13 +119,14 @@ class PacketRelay():
     SSDP_MCAST_PORT = 1900
     SSDP_UNICAST_PORT = 1901
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, logger, ssdpUnicastAddr):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
         self.ttl = ttl
         self.oneInterface = oneInterface
         self.allowNonEther = allowNonEther
+        self.masquerade = masquerade
 
         self.nif = Netifaces(homebrewNetifaces, ifNameStructLen)
         self.logger = logger
@@ -133,7 +134,7 @@ class PacketRelay():
         self.transmitters = []
         self.receivers = []
         self.etherAddrs = {}
-        self.etherType = struct.pack('!h', 0x0800)
+        self.etherType = struct.pack('!H', 0x0800)
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -289,12 +290,9 @@ class PacketRelay():
                 if self.ttl:
                     data = data[:8] + struct.pack('B', self.ttl) + data[9:]
 
-                ipChecksum = data[10:12]
+                ipChecksum = struct.unpack('!H', data[10:12])[0]
                 if ipChecksum in recentChecksums:
                     continue
-                recentChecksums.append(ipChecksum)
-                if len(recentChecksums) > 256:
-                    recentChecksums = recentChecksums[1:]
 
                 sourceAddress = socket.inet_ntoa(data[12:16])
                 destinationAddress = socket.inet_ntoa(data[16:20])
@@ -386,6 +384,31 @@ class PacketRelay():
                                                 len(data) != 1 and 's' or '', addr[0], origSourceAddress,
                                                 origSourcePort, receivingInterface, ttl, origDestinationAddress,
                                                 origDestinationPort, tx['interface'], tx['addr']))
+
+                        if tx['interface'] in self.masquerade:
+                            data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
+
+                        # Zero out current checksum
+                        data = data[:10] + struct.pack('!H', 0) + data[12:]
+
+                        # Recompute the IP header checksum
+                        checksum = 0
+                        for i in range(0, ipHeaderLength, 2):
+                            checksum += struct.unpack('!H', data[i:i+2])[0]
+
+                        while checksum > 0xffff:
+                            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
+
+                        data = data[:10] + struct.pack('!H', ~checksum & 0xffff) + data[12:]
+
+                        ipChecksum = struct.unpack('!H', data[10:12])[0]
+                        recentChecksums.append(ipChecksum)
+                        if len(recentChecksums) > 256:
+                            recentChecksums = recentChecksums[1:]
+
+                        packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
+                        tx['socket'].send(packet)
+                        self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
@@ -539,6 +562,8 @@ def main():
                         help='Help the self-contained netifaces work out its ifName struct length.')
     parser.add_argument('--allowNonEther', action='store_true',
                         help='Allow non-ethernet interfaces to be configured.')
+    parser.add_argument('--masquerade', nargs='+',
+                        help='Masquerade outbound packets from these interface(s).')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
@@ -581,7 +606,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, logger, args.ssdpUnicastAddr)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
