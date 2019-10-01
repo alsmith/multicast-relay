@@ -136,6 +136,8 @@ class PacketRelay():
         self.etherAddrs = {}
         self.etherType = struct.pack('!H', 0x0800)
 
+        self.recentChecksums = []
+
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
             self.etherAddrs[addr] = self.broadcastIpToMac(addr)
@@ -171,100 +173,68 @@ class PacketRelay():
         self.receivers.append(rx)
 
     @staticmethod
-    def net_checksum(data):
-        """Calculate the IPv4 / UDP checksum of data as byte array.
-        Data has a valid checksum if net_checksum(data) == 0
-        Alternatively, to calculate the checksum of a header,
-        set its checksum bytes (10 and 11 for IPv4, 6 and 7 for UDP, then
-        run net_checksum(), e.g. for an IPv4 header:
-        cksum = net_checksum(header[:10] + struct.pack('!H', 0) + header[12:])
+    def unicastIpToMac(ip, procNetArp=None):
         """
-        # See https://en.wikipedia.org/wiki/IPv4_header_checksum for algorithm
-        # Note: chose to implement with clarity over speed
-        cksum = 0
-        pointer = 0
-
-        size = len(data)
-        #The main loop adds up each set of 2 bytes. They are first converted to strings and then concatenated
-        #together, converted to integers, and then added to the sum.
-        while size > 1:
-            val = struct.unpack('!H', data[pointer:pointer+2])[0]
-            cksum += val
-            size -= 2
-            pointer += 2
-        if size:
-            # The data to checksum has an odd number of bytes, so one left to go through:
-            cksum += struct.unpack('!H', data[pointer]+'\x00')[0]
-
-        # Now sum the first 4 bits with the last 16:
-        first4b = (cksum >> 16)
-        last16b = cksum & 0x0FFFF
-
-        cksum = first4b + last16b
-        # Binary inversion:
-        cksum = ~cksum
-        # for some reason it does the right thing on the last 16 bits, but ends up adding bits at the front
-        # so we have to only keep the last 16 bits
-        cksum = cksum & 0xFFFF
-        return cksum
-
-    @staticmethod
-    def unicast_ip2mac_str(ip_as_string, proc_net_arp_content=None):
-        """Return the mac address (as a string) of ip_as_string
-           If proc_net_arp_content is not None, then it will be used instead
-           of reading /proc/net/arp (useful for unit tests).
+        Return the mac address (as a string) of ip
+        If procNetArp is not None, then it will be used instead
+        of reading /proc/net/arp (useful for unit tests).
         """
-        if proc_net_arp_content:
-            arp_table = proc_net_arp_content
+        if procNetArp:
+            arpTable = procNetArp
         else:
             # The arp table should be fairly small -- read it all in one go
-            with open('/proc/net/arp', 'r') as arp_file:
-                arp_table = arp_file.read()
+            with open('/proc/net/arp', 'r') as fd:
+                arpTable = fd.read()
+
         # Format:
         # IP address       HW type     Flags       HW address            Mask     Device
         # 192.168.0.1      0x1         0x2         18:90:22:bf:3c:23     *        wlp2s0
-        matches = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s.*\s(([a-fA-F\d]{1,2}\:){5}[a-fA-F\d]{1,2})",
-                             arp_table)
-        # We end up with tupes of 3 groups: (ip, mac, one_of_the_mac_sub_group)
+        matches = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s.*\s(([a-fA-F\d]{1,2}\:){5}[a-fA-F\d]{1,2})", arpTable)
+
+        # We end up with tuples of 3 groups: (ip, mac, one_of_the_mac_sub_group)
         # We remove the 3rd one which allows us to create a dictionary:
         ip2mac = dict([t[0:2] for t in matches])
 
         # Default to None if key not in dict
-        return ip2mac.get(ip_as_string, None)
+        return ip2mac.get(ip, None)
 
     @staticmethod
-    def modify_udp_packet(data, ipHeaderLength, newSrcAddr=None,
-                          newSrcPort=None, newDstAddr=None, newDstPort=None):
-        sourceAddress = newSrcAddr if newSrcAddr else socket.inet_ntoa(data[12:16])
-        destinationAddress = newDstAddr if newDstAddr else socket.inet_ntoa(data[16:20])
-        sourcePort = newSrcPort if newSrcPort \
-            else struct.unpack('!H', data[ipHeaderLength+0:ipHeaderLength+2])[0]
-        destinationPort = newDstPort if newDstPort \
-            else struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
+    def modifyUdpPacket(data, ipHeaderLength, srcAddr=None, srcPort=None, dstAddr=None, dstPort=None):
+        srcAddr = srcAddr if srcAddr else socket.inet_ntoa(data[12:16])
+        dstAddr = dstAddr if dstAddr else socket.inet_ntoa(data[16:20])
 
-        # recreate the packet with the right checksum:
-        udp_data = data[ipHeaderLength+8:]
-        udp_data_orig_len = len(udp_data)
-        udp_length = 8 + len(udp_data)
-        pseudo_header = socket.inet_aton(sourceAddress) + socket.inet_aton(destinationAddress)
-        pseudo_header = pseudo_header + struct.pack('!BBH', 0, socket.IPPROTO_UDP, udp_length)
-        # Set the checksum field to 0 to calculate the actual checksum
-        udp_header = struct.pack('!4H', sourcePort, destinationPort, udp_length, 0)
-        checksum = PacketRelay.net_checksum(pseudo_header + udp_header + udp_data)
-        udp_header = struct.pack('!4H', sourcePort, destinationPort, udp_length, checksum)
+        srcPort = srcPort if srcPort else struct.unpack('!H', data[ipHeaderLength+0:ipHeaderLength+2])[0]
+        dstPort = dstPort if dstPort else struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
 
-        ip_header = data[:ipHeaderLength]
-        # Put IP checksum at 0 to calculate correct checksum
-        ip_header = ip_header[:10] + struct.pack('!H', 0) + socket.inet_aton(sourceAddress) \
-            + socket.inet_aton(destinationAddress) + ip_header[20:]
+        # Recreate the packet
+        ipHeader = data[:ipHeaderLength-8] + socket.inet_aton(srcAddr) + socket.inet_aton(dstAddr) + data[ipHeaderLength:]
 
-        ip_cksum = PacketRelay.net_checksum(ip_header)
-        ip_header = ip_header[:10] + struct.pack('!H', ip_cksum) + ip_header[12:]
-        modified_data = ip_header + udp_header + udp_data
-        return modified_data
+        udpData = data[ipHeaderLength+8:]
+        udpLength = 8 + len(udpData)
+        udpHeader = struct.pack('!4H', srcPort, dstPort, udpLength, 0)
+
+        return ipHeader + udpHeader + udpData
+
+    def computeIPChecksum(self, data, ipHeaderLength):
+        # Zero out current checksum
+        data = data[:10] + struct.pack('!H', 0) + data[12:]
+
+        # Recompute the IP header checksum
+        checksum = 0
+        for i in range(0, ipHeaderLength, 2):
+            checksum += struct.unpack('!H', data[i:i+2])[0]
+
+        while checksum > 0xffff:
+            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
+
+        checksum = ~checksum & 0xffff
+        self.recentChecksums.append(checksum)
+        if len(self.recentChecksums) > 256:
+            self.recentChecksums = self.recentChecksums[1:]
+
+        return data[:10] + struct.pack('!H', checksum) + data[12:]
 
     def loop(self):
-        recentChecksums = []
         # Record where the most recent Ssdp searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
         #   recording the last one seems to be enough for a 'normal' home SSDP traffic
@@ -291,11 +261,11 @@ class PacketRelay():
                     data = data[:8] + struct.pack('B', self.ttl) + data[9:]
 
                 ipChecksum = struct.unpack('!H', data[10:12])[0]
-                if ipChecksum in recentChecksums:
+                if ipChecksum in self.recentChecksums:
                     continue
 
-                sourceAddress = socket.inet_ntoa(data[12:16])
-                destinationAddress = socket.inet_ntoa(data[16:20])
+                srcAddr = socket.inet_ntoa(data[12:16])
+                dstAddr = socket.inet_ntoa(data[16:20])
 
                 # Compute the length of the IP header so that we can then move past
                 # it and delve into the UDP packet to find out what destination port
@@ -305,110 +275,86 @@ class PacketRelay():
                 if sys.version_info > (3, 0):
                     firstDataByte = bytes([data[0]])
                 ipHeaderLength = (struct.unpack('B', firstDataByte)[0] & 0x0f) * 4
-                sourcePort = struct.unpack('!H', data[ipHeaderLength+0:ipHeaderLength+2])[0]
-                destinationPort = struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
+                srcPort = struct.unpack('!H', data[ipHeaderLength+0:ipHeaderLength+2])[0]
+                dstPort = struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
 
-                origSourceAddress = sourceAddress  # str
-                origSourcePort = sourcePort  # int
-                origDestinationAddress = destinationAddress  # str
-                origDestinationPort = destinationPort  # int
+                origSrcAddr = srcAddr
+                origSrcPort = srcPort
+                origDstAddr = dstAddr
+                origDstPort = dstPort
 
                 # Record who sent the request
                 # FIXME: record more than one?
-                dest_mac = None
-                modified_data = None
-                if origDestinationAddress == PacketRelay.SSDP_MCAST_ADDR \
-                        and origDestinationPort == PacketRelay.SSDP_MCAST_PORT and re.search(r'M-SEARCH', data):
-                    recentSsdpSearchSrc = {'addr': origSourceAddress, 'port': origSourcePort}
-                    self.logger.info('Last SSDP search source: %s:%d' % (origSourceAddress, origSourcePort))
-                    # Modify the src IP and port to make it look like it comes from us
-                    # so as we receive the unicast answers to a well known port (1901) and can relay them
-                    sourceAddress = self.ssdpUnicastAddr
-                    sourcePort = PacketRelay.SSDP_UNICAST_PORT
-                    modified_data = PacketRelay.modify_udp_packet(data, ipHeaderLength,
-                                                                  newSrcAddr=sourceAddress,
-                                                                  newSrcPort=sourcePort)
+                destMac = None
+                modifiedData = None
 
-                elif origDestinationAddress == self.ssdpUnicastAddr \
-                        and origDestinationPort == PacketRelay.SSDP_UNICAST_PORT:
+                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and re.search(r'M-SEARCH', data):
+                    recentSsdpSearchSrc = {'addr': srcAddr, 'port': srcPort}
+                    self.logger.info('Last SSDP search source: %s:%d' % (srcAddr, srcPort))
+
+                    # Modify the src IP and port to make it look like it comes from us
+                    # so as we receive the unicast answers to a well known port (1901)
+                    # and can relay them
+                    srcAddr = self.ssdpUnicastAddr
+                    srcPort = PacketRelay.SSDP_UNICAST_PORT
+                    modifiedData = PacketRelay.modifyUdpPacket(data, ipHeaderLength, srcAddr=srcAddr, srcPort=srcPort)
+
+                elif origDstAddr == self.ssdpUnicastAddr and origDstPort == PacketRelay.SSDP_UNICAST_PORT:
                     if 'addr' not in recentSsdpSearchSrc or 'port' not in recentSsdpSearchSrc:
                         # We probably haven't seen a SSDP multicast request yet
                         continue
+
                     # Relay SSDP unicast answer
-                    destinationAddress = recentSsdpSearchSrc['addr']
-                    destinationPort = recentSsdpSearchSrc['port']
-                    self.logger.info("received SSDP Unicast - received from %s:%d on %s:%d, need to relay to %s:%d"
-                                     % (origSourceAddress, origSourcePort, origDestinationAddress, origDestinationPort,
-                                        destinationAddress, destinationPort))
-                    modified_data = PacketRelay.modify_udp_packet(data, ipHeaderLength,
-                                                                  newDstAddr=destinationAddress,
-                                                                  newDstPort=destinationPort)
+                    dstAddr = recentSsdpSearchSrc['addr']
+                    dstPort = recentSsdpSearchSrc['port']
+                    self.logger.info('Received SSDP Unicast - received from %s:%d on %s:%d, need to relay to %s:%d' % (origSrcAddr, origSrcPort, origDstAddr, origDstPort, dstAddr, dstPort))
+                    modifiedData = PacketRelay.modifyUdpPacket(data, ipHeaderLength, dstAddr=dstAddr, dstPort=dstPort)
 
                     try:
-                        dest_mac = binascii.unhexlify(PacketRelay.unicast_ip2mac_str(destinationAddress).replace(':', ''))
+                        destMac = binascii.unhexlify(PacketRelay.unicastIpToMac(dstAddr).replace(':', ''))
                     except e:
-                        self.logger.info("DEBUG: exception while resolving mac of IP '%s'" % destinationAddress)
+                        self.logger.info("DEBUG: exception while resolving mac of IP '%s'" % dstAddr)
                         continue
+
                     # It's possible (though unlikely) we can't resolve the MAC if it's unicast.
                     # In that case, we can't relay the packet
-                    if not dest_mac:
-                        self.logger.info("DEBUG: could not resolve mac of IP '%s'" % destinationAddress)
+                    if not destMac:
+                        self.logger.info("DEBUG: could not resolve mac of IP '%s'" % dstAddr)
                         continue
 
                 # Work out the name of the interface we received the packet on.
                 receivingInterface = 'unknown'
                 for tx in self.transmitters:
-                    if origDestinationAddress == tx['relay']['addr'] and origDestinationPort == tx['relay']['port'] \
+                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
                             and self.onNetwork(addr[0], tx['addr'], tx['netmask']):
                         receivingInterface = tx['interface']
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
-                    if origDestinationAddress == tx['relay']['addr'] and origDestinationPort == tx['relay']['port'] \
-                            and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
-
-                        dest_mac = dest_mac if dest_mac else self.etherAddrs[destinationAddress]
-                        if modified_data and destinationAddress != self.ssdpUnicastAddr:
-                            packet = dest_mac + tx['mac'] + self.etherType + modified_data
+                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
+                        destMac = destMac if destMac else self.etherAddrs[dstAddr]
+                        if modifiedData and dstAddr != self.ssdpUnicastAddr:
+                            modifiedData = self.computeIPChecksum(modifiedData, ipHeaderLength)
+                            packet = destMac + tx['mac'] + self.etherType + modifiedData
                             tx['socket'].send(packet)
-                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s'
-                                             % (tx['service'] and '[%s] ' % tx['service'] or '', len(data),
-                                                len(data) != 1 and 's' or '', addr[0], sourceAddress, sourcePort,
-                                                receivingInterface, ttl, destinationAddress, destinationPort,
-                                                tx['interface'], tx['addr']))
-                        elif origDestinationAddress != self.ssdpUnicastAddr:
-                            packet = dest_mac + tx['mac'] + self.etherType + data
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+
+                        elif origDstAddr != self.ssdpUnicastAddr:
+                            data = self.computeIPChecksum(data, ipHeaderLength)
+                            packet = destMac + tx['mac'] + self.etherType + data
                             tx['socket'].send(packet)
-                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s'
-                                             % (tx['service'] and '[%s] ' % tx['service'] or '', len(data),
-                                                len(data) != 1 and 's' or '', addr[0], origSourceAddress,
-                                                origSourcePort, receivingInterface, ttl, origDestinationAddress,
-                                                origDestinationPort, tx['interface'], tx['addr']))
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
 
-                        if tx['interface'] in self.masquerade:
-                            data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
+                        else:
+                            if tx['interface'] in self.masquerade:
+                                data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
 
-                        # Zero out current checksum
-                        data = data[:10] + struct.pack('!H', 0) + data[12:]
 
-                        # Recompute the IP header checksum
-                        checksum = 0
-                        for i in range(0, ipHeaderLength, 2):
-                            checksum += struct.unpack('!H', data[i:i+2])[0]
+                            data = self.computeIPChecksum(data, ipHeaderLength)
 
-                        while checksum > 0xffff:
-                            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
-
-                        data = data[:10] + struct.pack('!H', ~checksum & 0xffff) + data[12:]
-
-                        ipChecksum = struct.unpack('!H', data[10:12])[0]
-                        recentChecksums.append(ipChecksum)
-                        if len(recentChecksums) > 256:
-                            recentChecksums = recentChecksums[1:]
-
-                        packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
-                        tx['socket'].send(packet)
-                        self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
+                            packet = self.etherAddrs[dstAddr] + tx['mac'] + self.etherType + data
+                            tx['socket'].send(packet)
+                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
