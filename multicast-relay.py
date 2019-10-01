@@ -288,7 +288,7 @@ class PacketRelay():
                 destMac = None
                 modifiedData = None
 
-                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and re.search(r'M-SEARCH', data):
+                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and (re.search(r'M-SEARCH', data) or re.search(r'NOTIFY', data)):
                     recentSsdpSearchSrc = {'addr': srcAddr, 'port': srcPort}
                     self.logger.info('Last SSDP search source: %s:%d' % (srcAddr, srcPort))
 
