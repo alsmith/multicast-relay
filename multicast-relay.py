@@ -210,7 +210,7 @@ class PacketRelay():
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
                     if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
-                        if self.masquerade:
+                        if tx['interface'] in self.masquerade:
                             data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
 
                         # Zero out current checksum
@@ -233,7 +233,7 @@ class PacketRelay():
 
                         packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
-                        self.logger.info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
+                        self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
@@ -384,8 +384,8 @@ def main():
                         help='Help the self-contained netifaces work out its ifName struct length.')
     parser.add_argument('--allowNonEther', action='store_true',
                         help='Allow non-ethernet interfaces to be configured.')
-    parser.add_argument('--masquerade', action='store_true',
-                        help='Send packet from my IP address(es).')
+    parser.add_argument('--masquerade', nargs='+',
+                        help='Masquerade outbound packets from these interface(s).')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
