@@ -116,12 +116,13 @@ class PacketRelay():
     MULTICAST_MAX = '239.255.255.255'
     BROADCAST     = '255.255.255.255'
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, masquerade, logger):
         self.interfaces = interfaces
         self.wait = waitForIP
         self.ttl = ttl
         self.oneInterface = oneInterface
         self.allowNonEther = allowNonEther
+        self.masquerade = masquerade
 
         self.nif = Netifaces(homebrewNetifaces, ifNameStructLen)
         self.logger = logger
@@ -129,7 +130,7 @@ class PacketRelay():
         self.transmitters = []
         self.receivers = []
         self.etherAddrs = {}
-        self.etherType = struct.pack('!h', 0x0800)
+        self.etherType = struct.pack('!H', 0x0800)
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -184,12 +185,9 @@ class PacketRelay():
                 if self.ttl:
                     data = data[:8] + struct.pack('B', self.ttl) + data[9:]
 
-                ipChecksum = data[10:12]
+                ipChecksum = struct.unpack('!H', data[10:12])[0]
                 if ipChecksum in recentChecksums:
                     continue
-                recentChecksums.append(ipChecksum)
-                if len(recentChecksums) > 256:
-                    recentChecksums = recentChecksums[1:]
 
                 destinationAddress = socket.inet_ntoa(data[16:20])
 
@@ -201,7 +199,7 @@ class PacketRelay():
                 if sys.version_info > (3, 0):
                     firstDataByte = bytes([data[0]])
                 ipHeaderLength = (struct.unpack('B', firstDataByte)[0] & 0x0f) * 4
-                destinationPort = struct.unpack('!h', data[ipHeaderLength+2:ipHeaderLength+4])[0]
+                destinationPort = struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
 
                 # Work out the name of the interface we received the packet on.
                 receivingInterface = 'unknown'
@@ -212,6 +210,27 @@ class PacketRelay():
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
                     if destinationAddress == tx['relay']['addr'] and destinationPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
+                        if self.masquerade:
+                            data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
+
+                        # Zero out current checksum
+                        data = data[:10] + struct.pack('!H', 0) + data[12:]
+
+                        # Recompute the IP header checksum
+                        checksum = 0
+                        for i in range(0, ipHeaderLength, 2):
+                            checksum += struct.unpack('!H', data[i:i+2])[0]
+
+                        while checksum > 0xffff:
+                            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
+
+                        data = data[:10] + struct.pack('!H', ~checksum & 0xffff) + data[12:]
+
+                        ipChecksum = struct.unpack('!H', data[10:12])[0]
+                        recentChecksums.append(ipChecksum)
+                        if len(recentChecksums) > 256:
+                            recentChecksums = recentChecksums[1:]
+
                         packet = self.etherAddrs[destinationAddress] + tx['mac'] + self.etherType + data
                         tx['socket'].send(packet)
                         self.logger.info('%sRelayed %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, destinationAddress, destinationPort, tx['interface'], tx['addr']))
@@ -365,6 +384,8 @@ def main():
                         help='Help the self-contained netifaces work out its ifName struct length.')
     parser.add_argument('--allowNonEther', action='store_true',
                         help='Allow non-ethernet interfaces to be configured.')
+    parser.add_argument('--masquerade', action='store_true',
+                        help='Send packet from my IP address(es).')
     parser.add_argument('--wait', action='store_true',
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
@@ -404,7 +425,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.masquerade, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
