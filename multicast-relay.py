@@ -135,6 +135,7 @@ class PacketRelay():
         self.receivers = []
         self.etherAddrs = {}
         self.etherType = struct.pack('!H', 0x0800)
+        self.udpMaxLength = 1024
 
         self.recentChecksums = []
 
@@ -234,6 +235,16 @@ class PacketRelay():
 
         return data[:10] + struct.pack('!H', checksum) + data[12:]
 
+    def transmitPacket(self, sock, srcMac, destMac, ipHeaderLength, ipPacket):
+        ipHeader  = ipPacket[:ipHeaderLength]
+        udpHeader = ipPacket[ipHeaderLength:ipHeaderLength+8]
+        data      = ipPacket[ipHeaderLength+8:]
+
+        for boundary in range(0, len(data), self.udpMaxLength):
+            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + data[boundary:boundary+self.udpMaxLength], ipHeaderLength)
+            etherPacket = destMac + srcMac + self.etherType + ipPacket
+            sock.send(etherPacket)
+
     def loop(self):
         # Record where the most recent Ssdp searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
@@ -331,37 +342,22 @@ class PacketRelay():
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
-                    masq = self.masquerade and tx['interface'] in self.masquerade
-
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
-                        if modifiedData and dstAddr != self.ssdpUnicastAddr:
-                            if masq:
-                               modifiedData = modifiedData[:12] + socket.inet_aton(tx['addr']) + modifiedData[16:]
 
-                            modifiedData = self.computeIPChecksum(modifiedData, ipHeaderLength)
-                            packet = destMac + tx['mac'] + self.etherType + modifiedData
-                            tx['socket'].send(packet)
-                            self.logger.info('%s%s %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', masq and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+                        if modifiedData and dstAddr != self.ssdpUnicastAddr:
+                            self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, modifiedData)
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
                         elif origDstAddr != self.ssdpUnicastAddr:
-                            if masq:
-                               data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
-
-                            data = self.computeIPChecksum(data, ipHeaderLength)
-                            packet = destMac + tx['mac'] + self.etherType + data
-                            tx['socket'].send(packet)
-                            self.logger.info('%s%s %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', masq and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
+                            self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
 
                         else:
-                            if masq:
+                            if tx['interface'] in self.masquerade:
                                 data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
-
-                            data = self.computeIPChecksum(data, ipHeaderLength)
-
-                            packet = self.etherAddrs[dstAddr] + tx['mac'] + self.etherType + data
-                            tx['socket'].send(packet)
-                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', masq and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+                            self.transmitPacket(tx['socket'], tx['mac'], self.etherAddrs[dstAddr], ipHeaderLength, data)
+                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
