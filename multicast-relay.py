@@ -276,8 +276,8 @@ class PacketRelay():
             for s in inputready:
                 if s == self.listenSock:
                     (self.connection, remoteAddr) = s.accept()
-                    if remoteAddr[0] != self.listenAddr:
-                        self.logger.info('Refusing connection from %s - not %s' % (remoteAddr[0], self.listenAddr))
+                    if remoteAddr[0] not in self.listenAddr:
+                        self.logger.info('Refusing connection from %s - not in %s' % (remoteAddr[0], self.listenAddr))
                         self.connection.close()
                         self.connection = None
                     self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
@@ -553,8 +553,8 @@ def main():
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
                         help='Set TTL on outbound packets.')
-    parser.add_argument('--listen',
-                        help='Listen for a remote connection from remote address A.B.C.D.')
+    parser.add_argument('--listen', nargs='+',
+                        help='Listen for a remote connection from one or more remote addresses A.B.C.D.')
     parser.add_argument('--remote',
                         help='Relay packets to remote multicast-relay on A.B.C.D.')
     parser.add_argument('--remotePort', type=int, default=1900,
