@@ -119,7 +119,7 @@ class PacketRelay():
     SSDP_MCAST_PORT = 1900
     SSDP_UNICAST_PORT = 1901
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -138,6 +138,21 @@ class PacketRelay():
         self.udpMaxLength = 1024
 
         self.recentChecksums = []
+
+        self.listenAddr = listen
+        self.listenSock = None
+        self.remoteAddr = remote
+        self.remotePort = remotePort
+        self.connection = None
+
+        if listen:
+            self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.listenSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.listenSock.bind(('0.0.0.0', self.remotePort))
+            self.listenSock.listen(0)
+        elif remote:
+            self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.connection.connect((self.remoteAddr, self.remotePort))
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -246,15 +261,36 @@ class PacketRelay():
             sock.send(etherPacket)
 
     def loop(self):
-        # Record where the most recent Ssdp searches came from, to relay unicast answers
+        # Record where the most recent SSDP searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
         #   recording the last one seems to be enough for a 'normal' home SSDP traffic
         #   (devices tend to retry SSDP queries multiple times anyway)
         recentSsdpSearchSrc = {}
         while True:
-            (inputready, _, _) = select.select(self.receivers, [], [])
+            additionalListeners = []
+            if self.listenSock:
+                additionalListeners.append(self.listenSock)
+            if self.connection:
+                additionalListeners.append(self.connection)
+            (inputready, _, _) = select.select(self.receivers + additionalListeners, [], [])
             for s in inputready:
-                (data, addr) = s.recvfrom(10240)
+                if s == self.listenSock:
+                    (self.connection, remoteAddr) = s.accept()
+                    if remoteAddr[0] != self.listenAddr:
+                        self.logger.info('Refusing connection from %s - not %s' % (remoteAddr[0], self.listenAddr))
+                        self.connection.close()
+                        self.connection = None
+                    self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
+                    continue
+                else:
+                    (data, addr) = s.recvfrom(10240)
+
+                if not data:
+                    self.logger.info('REMOTE: Connection closed')
+                    s.close()
+                    if s == self.connection:
+                        self.connection = None
+                    continue
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
@@ -517,14 +553,24 @@ def main():
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
                         help='Set TTL on outbound packets.')
+    parser.add_argument('--listen',
+                        help='Listen for a remote connection from remote address A.B.C.D.')
+    parser.add_argument('--remote',
+                        help='Relay packets to remote multicast-relay on A.B.C.D.')
+    parser.add_argument('--remotePort', type=int, default=1900,
+                        help='Use this port to listen/connect to.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output.')
     args = parser.parse_args()
 
-    if len(args.interfaces) < 2 and not args.oneInterface:
+    if len(args.interfaces) < 2 and not args.oneInterface and not args.listen and not args.remote:
         print('You should specify at least two interfaces to relay between')
+        return 1
+
+    if args.remote and args.listen:
+        print('Relay role should be either --listen or --remote (or neither) but not both')
         return 1
 
     if args.ttl and (args.ttl < 0 or args.ttl > 255):
@@ -555,7 +601,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
@@ -598,3 +644,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+

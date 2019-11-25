@@ -49,6 +49,13 @@ it's rather tricky to compile up netifaces.
 to each interface rather than bailing immediately if an interface is yet to be
 assigned an address.
 
+--listen A.B.C.D for connections from the specified remote host.
+
+--remote A.B.C.D connections to the specified remote host. If either --listen or
+    --remote are specified, then one can also specify just one local interface.
+
+--remotePort PORT use the specified port for remote communications (default: 1900).
+
 --foreground stops the process forking itself off into the background. This
 flag also encourages logging to stdout as well as to the syslog.
 
