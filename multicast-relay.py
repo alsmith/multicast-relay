@@ -284,6 +284,8 @@ class PacketRelay():
                     continue
                 else:
                     (data, addr) = s.recvfrom(10240)
+                    if self.connection and s != self.connection:
+                          self.connection.sendall(data)
 
                 if not data:
                     self.logger.info('REMOTE: Connection closed')
