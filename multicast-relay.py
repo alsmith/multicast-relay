@@ -14,7 +14,7 @@ import time
 # https://github.com/alsmith/multicast-relay
 
 class Logger():
-    def __init__(self, foreground, verbose):
+    def __init__(self, foreground, logfile, verbose):
         self.verbose = verbose
 
         try:
@@ -31,6 +31,11 @@ class Logger():
                 stream_handler = logging.StreamHandler(sys.stdout)
                 stream_handler.setFormatter(logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%b-%d %H:%M:%S'))
                 logger.addHandler(stream_handler)
+
+            if logfile:
+                file_handler = logging.FileHandler(logfile)
+                file_handler.setFormatter(logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%b-%d %H:%M:%S'))
+                logger.addHandler(file_handler)
 
             if verbose:
                 logger.setLevel(logging.INFO)
@@ -519,6 +524,8 @@ def main():
                         help='Set TTL on outbound packets.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
+    parser.add_argument('--logfile',
+                        help='Save logs to this file.')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output.')
     args = parser.parse_args()
@@ -538,13 +545,13 @@ def main():
         os.setsid()
         os.close(sys.stdin.fileno())
 
-    logger = Logger(args.foreground, args.verbose)
+    logger = Logger(args.foreground, args.logfile, args.verbose)
 
     relays = set()
     if not args.noMDNS:
-        relays.add(('224.0.0.251:5353',            'mDNS'))
+        relays.add(('224.0.0.251:5353', 'mDNS'))
     if not args.noSSDP:
-        relays.add(('%s:%d' % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT),        'SSDP'))
+        relays.add(('%s:%d' % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT), 'SSDP'))
     if not args.noSonosDiscovery:
         relays.add((PacketRelay.BROADCAST+':6969', 'Sonos Discovery'))
 
