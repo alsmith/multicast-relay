@@ -283,17 +283,23 @@ class PacketRelay():
                     self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
                     continue
                 else:
-                    (data, addr) = s.recvfrom(10240)
-
-                if not data:
-                    self.logger.info('REMOTE: Connection closed')
-                    s.close()
                     if s == self.connection:
-                        self.connection = None
-                    continue
+                        (data, addr) = s.recvfrom(10240)
+                        if not data:
+                            self.logger.info('REMOTE: Connection closed')
+                            s.close()
+                            if s == self.connection:
+                                self.connection = None
+                            continue
+
+                        addr = socket.inet_ntoa(data[0:4])
+                        data = data[4:]
+                    else:
+                        (data, addr) = s.recvfrom(10240)
+                        addr = addr[0]
 
                 if self.connection and s != self.connection:
-                      self.connection.sendall(data)
+                      self.connection.sendall(socket.inet_aton(addr) + data)
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
@@ -338,7 +344,7 @@ class PacketRelay():
                 destMac = None
                 modifiedData = None
 
-                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and (re.search(r'M-SEARCH', data) or re.search(r'NOTIFY', data)):
+                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and (re.search(b'M-SEARCH', data) or re.search(b'NOTIFY', data)):
                     recentSsdpSearchSrc = {'addr': srcAddr, 'port': srcPort}
                     self.logger.info('Last SSDP search source: %s:%d' % (srcAddr, srcPort))
 
@@ -376,27 +382,27 @@ class PacketRelay():
                 receivingInterface = 'unknown'
                 for tx in self.transmitters:
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
-                            and self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                            and self.onNetwork(addr, tx['addr'], tx['netmask']):
                         receivingInterface = tx['interface']
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
-                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
+                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
 
                         if modifiedData and dstAddr != self.ssdpUnicastAddr:
                             self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, modifiedData)
-                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr, srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
                         elif origDstAddr != self.ssdpUnicastAddr:
                             self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
-                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr, origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
 
                         else:
                             if tx['interface'] in self.masquerade:
                                 data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
                             self.transmitPacket(tx['socket'], tx['mac'], self.etherAddrs[dstAddr], ipHeaderLength, data)
-                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
