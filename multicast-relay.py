@@ -551,7 +551,7 @@ def main():
     if not args.noMDNS:
         relays.add(('224.0.0.251:5353', 'mDNS'))
     if not args.noSSDP:
-        relays.add(('%s:%d' % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT),        'SSDP'))
+        relays.add(('%s:%d' % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT), 'SSDP'))
     if not args.noSonosDiscovery:
         relays.add((PacketRelay.BROADCAST+':6969', 'Sonos Discovery'))
 
