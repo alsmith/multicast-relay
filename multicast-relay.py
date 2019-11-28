@@ -369,7 +369,7 @@ class PacketRelay():
                         receivingInterface = 'remote'
                         self.connection.setblocking(1)
                         try:
-                            (data, _) = s.recvfrom(len(self.MAGIC)+2, socket.MSG_WAITALL)
+                            (data, _) = s.recvfrom(2, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
@@ -379,13 +379,6 @@ class PacketRelay():
                         if not data:
                             s.close()
                             self.logger.info('REMOTE: Connection closed')
-                            self.connection = None
-                            self.connectFailure = time.time()
-                            continue
-
-                        magic = data[:len(self.MAGIC)]
-                        if magic != self.MAGIC:
-                            self.logger.info('REMOTE: Garbage data received, closing connection.')
                             self.connection = None
                             self.connectFailure = time.time()
                             continue
@@ -404,6 +397,12 @@ class PacketRelay():
                         magic = socket.inet_ntoa(packet[:len(self.MAGIC)])
                         addr = socket.inet_ntoa(packet[len(self.MAGIC):len(self.MAGIC)+4])
                         data = packet[len(self.MAGIC)+4:]
+
+                        if magic != self.MAGIC:
+                            self.logger.info('REMOTE: Garbage data received, closing connection.')
+                            self.connection = None
+                            self.connectFailure = time.time()
+                            continue
 
                     else:
                         receivingInterface = 'local'
