@@ -59,6 +59,8 @@ are specified, then one can also specify just one local interface with --interfa
 
 `--remoteRetry` if the remote connection fails, wait at least this number of seconds before retrying (default: 5).
 
+`--aes` use the specified string to encrypt/decrypt data packets.
+
 `--foreground` stops the process forking itself off into the background. This
 flag also encourages logging to stdout as well as to the syslog.
 

@@ -117,15 +117,60 @@ class Netifaces():
             import netifaces
             return netifaces.ifaddresses(interface)
 
-class PacketRelay():
-    MULTICAST_MIN = '224.0.0.0'
-    MULTICAST_MAX = '239.255.255.255'
-    BROADCAST     = '255.255.255.255'
-    SSDP_MCAST_ADDR = '239.255.255.250'
-    SSDP_MCAST_PORT = 1900
-    SSDP_UNICAST_PORT = 1901
+class Cipher():
+    def __init__(self, key):
+        self.key = None
+        if not key:
+            return
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, remoteRetry, logger):
+        import Crypto.Cipher.AES
+        import hashlib
+
+        self.blockSize = Crypto.Cipher.AES.block_size
+        self.key = hashlib.sha256(key.encode()).digest()
+
+    @staticmethod
+    def strToInt(s):
+        return int(binascii.hexlify(s), 16)
+
+    def encrypt(self, plaintext):
+        if not self.key:
+            return plaintext
+
+        import Crypto
+        import Crypto.Random
+        import Crypto.Util.Counter
+
+        iv = Crypto.Random.new().read(self.blockSize)
+        ctr = Crypto.Util.Counter.new(128, initial_value=self.strToInt(iv))
+        aes = Crypto.Cipher.AES.new(self.key, Crypto.Cipher.AES.MODE_CTR, counter=ctr)
+        return iv + aes.encrypt(plaintext)
+
+    def decrypt(self, ciphertext):
+        if not self.key:
+            return ciphertext
+
+        import Crypto
+        import Crypto.Util.Counter
+
+        iv = ciphertext[:self.blockSize]
+        ctr = Crypto.Util.Counter.new(128, initial_value=self.strToInt(iv))
+        aes = Crypto.Cipher.AES.new(self.key, Crypto.Cipher.AES.MODE_CTR, counter=ctr)
+        return aes.decrypt(ciphertext[self.blockSize:])
+
+class PacketRelay():
+    MULTICAST_MIN     = '224.0.0.0'
+    MULTICAST_MAX     = '239.255.255.255'
+    BROADCAST         = '255.255.255.255'
+    SSDP_MCAST_ADDR   = '239.255.255.250'
+    SSDP_MCAST_PORT   = 1900
+    SSDP_UNICAST_PORT = 1901
+    MAGIC             = b'MRLY'
+
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface,
+                 homebrewNetifaces, ifNameStructLen, allowNonEther,
+                 ssdpUnicastAddr, masquerade, listen, remote, remotePort,
+                 remoteRetry, aes, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -150,6 +195,8 @@ class PacketRelay():
         self.remoteAddr = remote
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
+        self.aes = Cipher(aes)
+
         self.connection = None
         self.connecting = False
         self.connectFailure = None
@@ -287,6 +334,7 @@ class PacketRelay():
             etherPacket = destMac + srcMac + self.etherType + ipPacket
             sock.send(etherPacket)
 
+
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
@@ -321,7 +369,7 @@ class PacketRelay():
                         receivingInterface = 'remote'
                         self.connection.setblocking(1)
                         try:
-                            (data, _) = s.recvfrom(6, socket.MSG_WAITALL)
+                            (data, _) = s.recvfrom(2, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
@@ -335,24 +383,36 @@ class PacketRelay():
                             self.connectFailure = time.time()
                             continue
 
-                        addr = socket.inet_ntoa(data[0:4])
-                        size = struct.unpack('!H', data[4:6])[0]
-
+                        size = struct.unpack('!H', data)[0]
                         try:
-                            (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
+                            (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
                             self.connectFailure = time.time()
                             continue
+
+                        packet = self.aes.decrypt(packet)
+
+                        magic = packet[:len(self.MAGIC)]
+                        addr = socket.inet_ntoa(packet[len(self.MAGIC):len(self.MAGIC)+4])
+                        data = packet[len(self.MAGIC)+4:]
+
+                        if magic != self.MAGIC:
+                            self.logger.info('REMOTE: Garbage data received, closing connection.')
+                            self.connection = None
+                            self.connectFailure = time.time()
+                            continue
+
                     else:
                         receivingInterface = 'local'
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
+                    packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     try:
-                        self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                        self.connection.sendall(struct.pack('!H', len(packet)) + packet)
                         if self.connecting:
                             self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
                             self.connecting = False
@@ -635,6 +695,8 @@ def main():
                         help='Use this port to listen/connect to.')
     parser.add_argument('--remoteRetry', type=int, default=5,
                         help='If the remote connection is terminated, retry at least N seconds later.')
+    parser.add_argument('--aes',
+                        help='Encryption key for the connection to the remote multicast-relay.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--logfile',
@@ -679,7 +741,22 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, args.remoteRetry, logger)
+    packetRelay = PacketRelay(interfaces        = args.interfaces,
+                              waitForIP         = args.wait,
+                              ttl               = args.ttl,
+                              oneInterface      = args.oneInterface,
+                              homebrewNetifaces = args.homebrewNetifaces,
+                              ifNameStructLen   = args.ifNameStructLen,
+                              allowNonEther     = args.allowNonEther,
+                              ssdpUnicastAddr   = args.ssdpUnicastAddr,
+                              masquerade        = args.masquerade,
+                              listen            = args.listen,
+                              remote            = args.remote,
+                              remotePort        = args.remotePort,
+                              remoteRetry       = args.remoteRetry,
+                              aes               = args.aes,
+                              logger            = logger)
+
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
