@@ -318,6 +318,7 @@ class PacketRelay():
                     continue
                 else:
                     if s == self.connection:
+                        receivingInterface = 'remote'
                         self.connection.setblocking(1)
                         try:
                             (data, _) = s.recvfrom(6, socket.MSG_WAITALL)
@@ -345,6 +346,7 @@ class PacketRelay():
                             self.connectFailure = time.time()
                             continue
                     else:
+                        receivingInterface = 'local'
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
@@ -442,11 +444,11 @@ class PacketRelay():
                         continue
 
                 # Work out the name of the interface we received the packet on.
-                receivingInterface = 'unknown'
-                for tx in self.transmitters:
-                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
-                            and self.onNetwork(addr, tx['addr'], tx['netmask']):
-                        receivingInterface = tx['interface']
+                if receivingInterface == 'local':
+                    for tx in self.transmitters:
+                        if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
+                                and self.onNetwork(addr, tx['addr'], tx['netmask']):
+                            receivingInterface = tx['interface']
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
