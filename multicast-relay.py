@@ -297,9 +297,21 @@ class PacketRelay():
         if not self.aes:
             return data
 
+        import Crypto
+
+        iv = Crypto.Random.new().read(AES.block_size)
+        cipher = Crypto.Cipher.AES.new(self.aes, AES.MODE_CBC, iv)
+        return iv + cipher.encrypt(data) 
+
     def decrypt(self, data):
         if not self.aes:
             return data
+
+        import Crypto
+
+        iv = data[:AES.block_size]
+        cipher = Crypto.Cipher.AES.new(self.aes, AES.MODE_CBC, iv)
+        return cipher.decrypt(data[AES.block_size:])
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
