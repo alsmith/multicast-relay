@@ -21,7 +21,7 @@ that IP forwarding is enabled (`echo 1 > /proc/sys/net/ipv4/ip_forward`) and
 that no firewalling is in place that would prevent connections being
 established.
 
-`usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--oneInterface] [--homebrewNetifaces] [--wait] [--listen REMOTE_ADDRESS [REMOTE_ADDRESS ...]] [--remote REMOTE_ADDRESS] [--remotePort PORT] [--foreground] [--verbose]`
+`usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--oneInterface] [--homebrewNetifaces] [--wait] [--listen REMOTE_ADDRESS [REMOTE_ADDRESS ...]] [--remote REMOTE_ADDRESS] [--remotePort PORT] [--foreground] [--logfile FILE] [--verbose]`
 
 `--interfaces` specifies the >= 2 interfaces that you desire to listen to and
 relay between. You can specify an interface by name, by IP address, or by
@@ -59,6 +59,8 @@ are specified, then one can also specify just one local interface with --interfa
 
 `--foreground` stops the process forking itself off into the background. This
 flag also encourages logging to stdout as well as to the syslog.
+
+`--logfile` saves log data to the specified file.
 
 `--verbose` steps up the logging.
 
