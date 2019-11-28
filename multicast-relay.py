@@ -294,7 +294,7 @@ class PacketRelay():
                             continue
 
                         addr = socket.inet_ntoa(data[0:4])
-                        size = struct.unpack('!H', data[4:6])
+                        size = struct.unpack('!H', data[4:6])[0]
                         (data, _) = s.recvfrom(size)
                     else:
                         (data, addr) = s.recvfrom(10240)
