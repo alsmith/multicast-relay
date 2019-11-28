@@ -139,6 +139,7 @@ class Cipher():
 
         import Crypto
         import Crypto.Random
+        import Crypto.Util.Counter
 
         iv = Crypto.Random.new().read(self.blockSize)
         ctr = Crypto.Util.Counter.new(128, initial_value=self.strToInt(iv))
