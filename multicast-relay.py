@@ -125,7 +125,7 @@ class PacketRelay():
     SSDP_MCAST_PORT = 1900
     SSDP_UNICAST_PORT = 1901
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, remoteRetry, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -149,6 +149,7 @@ class PacketRelay():
         self.listenSock = None
         self.remoteAddr = remote
         self.remotePort = remotePort
+        self.remoteRetry = remoteRetry
         self.connection = None
         self.connecting = False
         self.connectFailure = None
@@ -162,8 +163,8 @@ class PacketRelay():
             self.connectRemote()
 
     def connectRemote(self):
-        # Attempt reconnection at most once every 5 seconds
-        if self.connectFailure and self.connectFailure > time.time()-5:
+        # Attempt reconnection at most once every N seconds
+        if self.connectFailure and self.connectFailure > time.time()-self.remoteRetry:
             return
 
         self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -626,6 +627,8 @@ def main():
                         help='Relay packets to remote multicast-relay on A.B.C.D.')
     parser.add_argument('--remotePort', type=int, default=1900,
                         help='Use this port to listen/connect to.')
+    parser.add_argument('--remoteRetry', type=int, default=5,
+                        help='If the remote connection is terminated, retry at least N seconds later.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--logfile',
@@ -670,7 +673,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, args.remoteRetry, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
