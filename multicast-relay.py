@@ -300,8 +300,8 @@ class PacketRelay():
         import Crypto
         import Crypto.Random
 
-        iv = Crypto.Random.new().read(AES.block_size)
-        cipher = Crypto.Cipher.AES.new(self.aes, AES.MODE_CBC, iv)
+        iv = Crypto.Random.new().read(Crypto.Cipher.AES.block_size)
+        cipher = Crypto.Cipher.AES.new(self.aes, Crypto.Cipher.AES.MODE_CBC, iv)
         return iv + cipher.encrypt(data) 
 
     def decrypt(self, data):
@@ -310,9 +310,9 @@ class PacketRelay():
 
         import Crypto
 
-        iv = data[:AES.block_size]
-        cipher = Crypto.Cipher.AES.new(self.aes, AES.MODE_CBC, iv)
-        return cipher.decrypt(data[AES.block_size:])
+        iv = data[:Crypto.Cipher.AES.block_size]
+        cipher = Crypto.Cipher.AES.new(self.aes, Crypto.Cipher.AES.MODE_CBC, iv)
+        return cipher.decrypt(data[Crypto.Cipher.AES.block_size:])
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
