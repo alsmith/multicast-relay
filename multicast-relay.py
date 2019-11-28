@@ -401,8 +401,9 @@ class PacketRelay():
 
                         packet = self.aes.decrypt(packet)
 
-                        addr = socket.inet_ntoa(packet[:4])
-                        data = packet[4:]
+                        magic = socket.inet_ntoa(packet[:len(self.MAGIC)])
+                        addr = socket.inet_ntoa(packet[len(self.MAGIC):len(self.MAGIC)+4])
+                        data = packet[len(self.MAGIC)+4:]
 
                     else:
                         receivingInterface = 'local'
@@ -410,9 +411,9 @@ class PacketRelay():
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
-                    packet = self.aes.encrypt(socket.inet_aton(addr) + data)
+                    packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     try:
-                        self.connection.sendall(self.MAGIC + struct.pack('!H', len(packet)) + packet)
+                        self.connection.sendall(struct.pack('!H', len(packet)) + packet)
                         if self.connecting:
                             self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
                             self.connecting = False
