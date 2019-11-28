@@ -383,7 +383,7 @@ class PacketRelay():
                             self.connectFailure = time.time()
                             continue
 
-                        size = struct.unpack('!H', data[:2])[0]
+                        size = struct.unpack('!H', data)[0]
                         try:
                             (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
