@@ -298,6 +298,7 @@ class PacketRelay():
             return data
 
         import Crypto
+        import Crypto.Random
 
         iv = Crypto.Random.new().read(AES.block_size)
         cipher = Crypto.Cipher.AES.new(self.aes, AES.MODE_CBC, iv)
