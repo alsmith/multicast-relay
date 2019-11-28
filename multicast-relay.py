@@ -357,6 +357,7 @@ class PacketRelay():
                             self.connection = None
                             self.connecting = False
                             self.connectFailure = time.time()
+                            continue
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
