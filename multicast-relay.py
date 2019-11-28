@@ -151,6 +151,7 @@ class PacketRelay():
         self.remotePort = remotePort
         self.connection = None
         self.connecting = False
+        self.connectFailure = None
 
         if self.listenAddr:
             self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -161,6 +162,10 @@ class PacketRelay():
             self.connectRemote()
 
     def connectRemote(self):
+        # Attempt reconnection at most once every 5 seconds
+        if self.connectFailure and self.connectFailure > time.time()-5:
+            return
+
         self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connection.setblocking(0)
         self.logger.info('REMOTE: Connecting to remote %s' % self.remoteAddr)
@@ -173,6 +178,7 @@ class PacketRelay():
             else:
                 self.connection = None
                 self.connecting = False
+                self.connectFailure = time.time()
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -313,12 +319,14 @@ class PacketRelay():
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
+                            self.connectFailure = time.time()
                             continue
 
                         if not data:
                             s.close()
                             self.logger.info('REMOTE: Connection closed')
                             self.connection = None
+                            self.connectFailure = time.time()
                             continue
 
                         addr = socket.inet_ntoa(data[0:4])
@@ -329,6 +337,7 @@ class PacketRelay():
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
+                            self.connectFailure = time.time()
                             continue
                     else:
                         (data, addr) = s.recvfrom(10240)
@@ -347,6 +356,7 @@ class PacketRelay():
                             self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
                             self.connection = None
                             self.connecting = False
+                            self.connectFailure = time.time()
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
