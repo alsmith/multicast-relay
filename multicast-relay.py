@@ -289,18 +289,29 @@ class PacketRelay():
                     continue
                 else:
                     if s == self.connection:
-                        (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
+                        try:
+                            (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
+                        except socket.error as e:
+                            self.logger.info('REMOTE: Connection closed (%s)' % str(e))
+                            self.connection = None
+                            continue
+
                         if not data:
                             # TODO: attempt reconnection, in a non-blocking fashion of course
                             self.logger.info('REMOTE: Connection closed')
                             s.close()
-                            if s == self.connection:
-                                self.connection = None
+                            self.connection = None
                             continue
 
                         addr = socket.inet_ntoa(data[0:4])
                         size = struct.unpack('!H', data[4:6])[0]
-                        (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
+
+                        try:
+                            (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
+                        except socket.error as e:
+                            self.logger.info('REMOTE: Connection closed (%s)' % str(e))
+                            self.connection = None
+                            continue
                     else:
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
