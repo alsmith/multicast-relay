@@ -284,7 +284,7 @@ class PacketRelay():
                     continue
                 else:
                     if s == self.connection:
-                        (data, addr) = s.recvfrom(6)
+                        (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
                         if not data:
                             # TODO: attempt reconnection, in a non-blocking fashion of course
                             self.logger.info('REMOTE: Connection closed')
@@ -295,7 +295,7 @@ class PacketRelay():
 
                         addr = socket.inet_ntoa(data[0:4])
                         size = struct.unpack('!H', data[4:6])[0]
-                        (data, _) = s.recvfrom(size)
+                        (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
                     else:
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
