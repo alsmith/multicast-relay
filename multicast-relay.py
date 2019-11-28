@@ -151,6 +151,7 @@ class Cipher():
             return ciphertext
 
         import Crypto
+        import Crypto.Util.Counter
 
         iv = ciphertext[:self.blockSize]
         ctr = Crypto.Util.Counter.new(128, initial_value=self.strToInt(iv))
