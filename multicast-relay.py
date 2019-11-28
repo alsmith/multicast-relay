@@ -286,6 +286,7 @@ class PacketRelay():
                     if s == self.connection:
                         (data, addr) = s.recvfrom(10240)
                         if not data:
+                            # TODO: attempt reconnection, in a non-blocking fashion of course
                             self.logger.info('REMOTE: Connection closed')
                             s.close()
                             if s == self.connection:
@@ -299,7 +300,7 @@ class PacketRelay():
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
-                      self.connection.sendall(socket.inet_aton(addr) + data)
+                    self.connection.sendall(socket.inet_aton(addr) + data)
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
