@@ -118,14 +118,18 @@ class Netifaces():
             return netifaces.ifaddresses(interface)
 
 class PacketRelay():
-    MULTICAST_MIN = '224.0.0.0'
-    MULTICAST_MAX = '239.255.255.255'
-    BROADCAST     = '255.255.255.255'
-    SSDP_MCAST_ADDR = '239.255.255.250'
-    SSDP_MCAST_PORT = 1900
+    MULTICAST_MIN     = '224.0.0.0'
+    MULTICAST_MAX     = '239.255.255.255'
+    BROADCAST         = '255.255.255.255'
+    SSDP_MCAST_ADDR   = '239.255.255.250'
+    SSDP_MCAST_PORT   = 1900
     SSDP_UNICAST_PORT = 1901
+    MAGIC             = 'MRLY'
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, remoteRetry, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface,
+                 homebrewNetifaces, ifNameStructLen, allowNonEther,
+                 ssdpUnicastAddr, masquerade, listen, remote, remotePort,
+                 remoteRetry, aes, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -150,6 +154,8 @@ class PacketRelay():
         self.remoteAddr = remote
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
+        self.aes = aes
+
         self.connection = None
         self.connecting = False
         self.connectFailure = None
@@ -321,7 +327,7 @@ class PacketRelay():
                         receivingInterface = 'remote'
                         self.connection.setblocking(1)
                         try:
-                            (data, _) = s.recvfrom(6, socket.MSG_WAITALL)
+                            (data, _) = s.recvfrom(len(self.MAGIC)+4+2, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
@@ -335,8 +341,15 @@ class PacketRelay():
                             self.connectFailure = time.time()
                             continue
 
-                        addr = socket.inet_ntoa(data[0:4])
-                        size = struct.unpack('!H', data[4:6])[0]
+                        magic = data[:len(self.MAGIC)]
+                        if magic != self.MAGIC:
+                            self.logger.info('REMOTE: Garbage data received, closing connection.')
+                            self.connection = None
+                            self.connectFailure = time.time()
+                            continue
+
+                        addr = socket.inet_ntoa(data[len(self.MAGIC):len(self.MAGIC)+4])
+                        size = struct.unpack('!H', data[len(self.MAGIC)+4:len(self.MAGIC)+6])[0]
 
                         try:
                             (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
@@ -635,6 +648,8 @@ def main():
                         help='Use this port to listen/connect to.')
     parser.add_argument('--remoteRetry', type=int, default=5,
                         help='If the remote connection is terminated, retry at least N seconds later.')
+    parser.add_argument('--aes',
+                        help='Encryption key for the connection to the remote multicast-relay.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--logfile',
@@ -679,7 +694,22 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, args.remoteRetry, logger)
+    packetRelay = PacketRelay(interfaces        = args.interfaces,
+                              waitForIP         = args.wait,
+                              ttl               = args.ttl,
+                              oneInterface      = args.oneInterface,
+                              homebrewNetifaces = args.homebrewNetifaces,
+                              ifNameStructLen   = args.ifNameStructLen,
+                              allowNonEther     = args.allowNonEther,
+                              ssdpUnicastAddr   = args.ssdpUnicastAddr,
+                              masquerade        = args.masquerade,
+                              listen            = args.listen,
+                              remote            = args.remote,
+                              remotePort        = args.remotePort,
+                              remoteRetry       = args.remoteRetry,
+                              aes               = args.aes,
+                              logger            = logger)
+
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
