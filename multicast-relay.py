@@ -124,7 +124,7 @@ class PacketRelay():
     SSDP_MCAST_ADDR   = '239.255.255.250'
     SSDP_MCAST_PORT   = 1900
     SSDP_UNICAST_PORT = 1901
-    MAGIC             = 'MRLY'
+    MAGIC             = b'MRLY'
 
     def __init__(self, interfaces, waitForIP, ttl, oneInterface,
                  homebrewNetifaces, ifNameStructLen, allowNonEther,
@@ -365,7 +365,7 @@ class PacketRelay():
 
                 if self.connection and s != self.connection:
                     try:
-                        self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                        self.connection.sendall(self.MAGIC + socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
                         if self.connecting:
                             self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
                             self.connecting = False
