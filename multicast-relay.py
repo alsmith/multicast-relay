@@ -316,7 +316,7 @@ class PacketRelay():
                     if s == self.connection:
                         self.connection.setblocking(1)
                         try:
-                            (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
+                            (data, _) = s.recvfrom(6, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
