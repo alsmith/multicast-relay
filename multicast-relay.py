@@ -394,7 +394,7 @@ class PacketRelay():
 
                         packet = self.aes.decrypt(packet)
 
-                        magic = socket.inet_ntoa(packet[:len(self.MAGIC)])
+                        magic = packet[:len(self.MAGIC)]
                         addr = socket.inet_ntoa(packet[len(self.MAGIC):len(self.MAGIC)+4])
                         data = packet[len(self.MAGIC)+4:]
 
