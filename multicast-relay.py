@@ -2,6 +2,7 @@
 
 import argparse
 import binascii
+import errno
 import os
 import re
 import select
@@ -149,15 +150,29 @@ class PacketRelay():
         self.remoteAddr = remote
         self.remotePort = remotePort
         self.connection = None
+        self.connecting = False
 
-        if listen:
+        if self.listenAddr:
             self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.listenSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.listenSock.bind(('0.0.0.0', self.remotePort))
             self.listenSock.listen(0)
-        elif remote:
-            self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        elif self.remoteAddr:
+            self.connectRemote()
+
+    def connectRemote(self):
+        self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.connection.setblocking(0)
+        self.logger.info('REMOTE: Connecting to remote %s' % self.remoteAddr)
+        self.connecting = True
+        try:
             self.connection.connect((self.remoteAddr, self.remotePort))
+        except socket.error as e:
+            if e.errno == errno.EINPROGRESS:
+                pass
+            else:
+                self.connection = None
+                self.connecting = False
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -272,6 +287,9 @@ class PacketRelay():
         #   (devices tend to retry SSDP queries multiple times anyway)
         recentSsdpSearchSrc = {}
         while True:
+            if self.remoteAddr and not self.connection:
+                self.connectRemote()
+
             additionalListeners = []
             if self.listenSock:
                 additionalListeners.append(self.listenSock)
@@ -289,6 +307,7 @@ class PacketRelay():
                     continue
                 else:
                     if s == self.connection:
+                        self.connection.setblocking(1)
                         try:
                             (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
                         except socket.error as e:
@@ -297,9 +316,8 @@ class PacketRelay():
                             continue
 
                         if not data:
-                            # TODO: attempt reconnection, in a non-blocking fashion of course
-                            self.logger.info('REMOTE: Connection closed')
                             s.close()
+                            self.logger.info('REMOTE: Connection closed')
                             self.connection = None
                             continue
 
@@ -317,7 +335,18 @@ class PacketRelay():
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
-                    self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                    try:
+                        self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                        if self.connecting:
+                            self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
+                            self.connecting = False
+                    except socket.error as e:
+                        if e.errno == errno.EAGAIN:
+                            pass
+                        else:
+                            self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
+                            self.connection = None
+                            self.connecting = False
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
