@@ -17,15 +17,16 @@ depending on your Sonos speaker.
 Please note that even when your devices have discovered one another, at
 least in the Sonos case, a unicast connection will be established from
 the speakers back to the controlling-telephone. You will need to make sure
-that IP forwarding is enabled (echo 1 > /proc/sys/net/ipv4/ip_forward) and
+that IP forwarding is enabled (`echo 1 > /proc/sys/net/ipv4/ip_forward`) and
 that no firewalling is in place that would prevent connections being
 established.
 
-`usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--oneInterface] [--homebrewNetifaces] [--wait] [--foreground] [--logfile FILE] [--verbose]`
+`usage: multicast-relay.py [-h] --interfaces INTERFACE INTERFACE [INTERFACE ...] [--relay BROADCAST_OR_MULTICAST:PORT [BROADCAST_OR_MULTICAST:PORT ...]] [--noMDNS] [--noSSDP] [--noSonosDiscovery] [--oneInterface] [--homebrewNetifaces] [--wait] [--listen REMOTE_ADDRESS [REMOTE_ADDRESS ...]] [--remote REMOTE_ADDRESS] [--remotePort PORT] [--foreground] [--logfile FILE] [--verbose]`
 
 `--interfaces` specifies the >= 2 interfaces that you desire to listen to and
 relay between. You can specify an interface by name, by IP address, or by
-network/netmask combination (e.g. 10.0.0.0/24 in the last case).
+network/netmask combination (e.g. 10.0.0.0/24 in the last case). With certain
+flags below, the minimum number of interfaces drops to >= 1.
 
 `--relay` specifies additional broadcast or multicast addresses to relay.
 
@@ -48,6 +49,13 @@ it's rather tricky to compile up netifaces.
 `--wait` indicates that the relay should wait for an IPv4 address to be assigned
 to each interface rather than bailing immediately if an interface is yet to be
 assigned an address.
+
+`--listen` for connections from the specified remote host(s).
+
+`--remote` connect to the specified remote host. If either --listen or --remote
+are specified, then one can also specify just one local interface with --interfaces.
+
+`--remotePort` PORT use the specified port for remote communications (default: 1900).
 
 `--foreground` stops the process forking itself off into the background. This
 flag also encourages logging to stdout as well as to the syslog.

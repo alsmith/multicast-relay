@@ -124,7 +124,7 @@ class PacketRelay():
     SSDP_MCAST_PORT = 1900
     SSDP_UNICAST_PORT = 1901
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -143,6 +143,21 @@ class PacketRelay():
         self.udpMaxLength = 1024
 
         self.recentChecksums = []
+
+        self.listenAddr = listen
+        self.listenSock = None
+        self.remoteAddr = remote
+        self.remotePort = remotePort
+        self.connection = None
+
+        if listen:
+            self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.listenSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.listenSock.bind(('0.0.0.0', self.remotePort))
+            self.listenSock.listen(0)
+        elif remote:
+            self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.connection.connect((self.remoteAddr, self.remotePort))
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -251,15 +266,47 @@ class PacketRelay():
             sock.send(etherPacket)
 
     def loop(self):
-        # Record where the most recent Ssdp searches came from, to relay unicast answers
+        # Record where the most recent SSDP searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
         #   recording the last one seems to be enough for a 'normal' home SSDP traffic
         #   (devices tend to retry SSDP queries multiple times anyway)
         recentSsdpSearchSrc = {}
         while True:
-            (inputready, _, _) = select.select(self.receivers, [], [])
+            additionalListeners = []
+            if self.listenSock:
+                additionalListeners.append(self.listenSock)
+            if self.connection:
+                additionalListeners.append(self.connection)
+            (inputready, _, _) = select.select(self.receivers + additionalListeners, [], [])
             for s in inputready:
-                (data, addr) = s.recvfrom(10240)
+                if s == self.listenSock:
+                    (self.connection, remoteAddr) = s.accept()
+                    if remoteAddr[0] not in self.listenAddr:
+                        self.logger.info('Refusing connection from %s - not in %s' % (remoteAddr[0], self.listenAddr))
+                        self.connection.close()
+                        self.connection = None
+                    self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
+                    continue
+                else:
+                    if s == self.connection:
+                        (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
+                        if not data:
+                            # TODO: attempt reconnection, in a non-blocking fashion of course
+                            self.logger.info('REMOTE: Connection closed')
+                            s.close()
+                            if s == self.connection:
+                                self.connection = None
+                            continue
+
+                        addr = socket.inet_ntoa(data[0:4])
+                        size = struct.unpack('!H', data[4:6])[0]
+                        (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
+                    else:
+                        (data, addr) = s.recvfrom(10240)
+                        addr = addr[0]
+
+                if self.connection and s != self.connection:
+                    self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
@@ -304,7 +351,7 @@ class PacketRelay():
                 destMac = None
                 modifiedData = None
 
-                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and (re.search(r'M-SEARCH', data) or re.search(r'NOTIFY', data)):
+                if dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and (re.search(b'M-SEARCH', data) or re.search(b'NOTIFY', data)):
                     recentSsdpSearchSrc = {'addr': srcAddr, 'port': srcPort}
                     self.logger.info('Last SSDP search source: %s:%d' % (srcAddr, srcPort))
 
@@ -342,27 +389,27 @@ class PacketRelay():
                 receivingInterface = 'unknown'
                 for tx in self.transmitters:
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
-                            and self.onNetwork(addr[0], tx['addr'], tx['netmask']):
+                            and self.onNetwork(addr, tx['addr'], tx['netmask']):
                         receivingInterface = tx['interface']
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
-                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr[0], tx['addr'], tx['netmask'])):
+                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
 
                         if modifiedData and dstAddr != self.ssdpUnicastAddr:
                             self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, modifiedData)
-                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr, srcAddr, srcPort, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
                         elif origDstAddr != self.ssdpUnicastAddr:
                             self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
-                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr[0], origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
+                            self.logger.info('%sRelayed %s byte%s from %s(%s):%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', len(data), len(data) != 1 and 's' or '', addr, origSrcAddr, origSrcPort, receivingInterface, ttl, origDstAddr, origDstPort, tx['interface'], tx['addr']))
 
                         else:
                             if tx['interface'] in self.masquerade:
                                 data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
                             self.transmitPacket(tx['socket'], tx['mac'], self.etherAddrs[dstAddr], ipHeaderLength, data)
-                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr[0], receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
+                            self.logger.info('%s%s %s byte%s from %s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '', tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed', len(data), len(data) != 1 and 's' or '', addr, receivingInterface, ttl, dstAddr, dstPort, tx['interface'], tx['addr']))
 
     def getInterface(self, interface):
         ifname = None
@@ -522,6 +569,12 @@ def main():
                         help='Wait for IPv4 address assignment.')
     parser.add_argument('--ttl', type=int,
                         help='Set TTL on outbound packets.')
+    parser.add_argument('--listen', nargs='+',
+                        help='Listen for a remote connection from one or more remote addresses A.B.C.D.')
+    parser.add_argument('--remote',
+                        help='Relay packets to remote multicast-relay on A.B.C.D.')
+    parser.add_argument('--remotePort', type=int, default=1900,
+                        help='Use this port to listen/connect to.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--logfile',
@@ -530,8 +583,12 @@ def main():
                         help='Enable verbose output.')
     args = parser.parse_args()
 
-    if len(args.interfaces) < 2 and not args.oneInterface:
+    if len(args.interfaces) < 2 and not args.oneInterface and not args.listen and not args.remote:
         print('You should specify at least two interfaces to relay between')
+        return 1
+
+    if args.remote and args.listen:
+        print('Relay role should be either --listen or --remote (or neither) but not both')
         return 1
 
     if args.ttl and (args.ttl < 0 or args.ttl > 255):
@@ -562,7 +619,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
@@ -605,3 +662,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
