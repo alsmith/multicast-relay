@@ -117,6 +117,45 @@ class Netifaces():
             import netifaces
             return netifaces.ifaddresses(interface)
 
+class Cipher():
+    def __init__(self, key):
+        self.key = None
+        if not key:
+            return
+
+        import Crypto.Cipher.AES
+        import hashlib
+
+        self.blockSize = Crypto.Cipher.AES.block_size
+        self.key = hashlib.sha256(key).digest()
+
+    @staticmethod
+    def strToInt(s):
+        return int(binascii.hexlify(s), 16)
+
+    def encrypt(self, plaintext):
+        if not self.key:
+            return plaintext
+
+        import Crypto
+        import Crypto.Random
+
+        iv = Crypto.Random.new().read(self.blockSize)
+        ctr = Crypto.Util.Counter.new(128, initial_value=self.strToInt(iv))
+        aes = Crypto.Cipher.AES.new(self.key, Crypto.Cipher.AES.MODE_CTR, counter=ctr)
+        return iv + aes.encrypt(plaintext)
+
+    def decrypt(self, ciphertext):
+        if not self.key:
+            return ciphertext
+
+        import Crypto
+
+        iv = ciphertext[:self.blockSize]
+        ctr = Crypto.Util.Counter.new(128, initial_value=self.strToInt(iv))
+        aes = Crypto.Cipher.AES.new(self.key, Crypto.Cipher.AES.MODE_CTR, counter=ctr)
+        return aes.decrypt(ciphertext[self.blockSize:])
+
 class PacketRelay():
     MULTICAST_MIN     = '224.0.0.0'
     MULTICAST_MAX     = '239.255.255.255'
@@ -154,7 +193,7 @@ class PacketRelay():
         self.remoteAddr = remote
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
-        self.aes = aes
+        self.aes = Cipher(aes)
 
         self.connection = None
         self.connecting = False
@@ -293,26 +332,6 @@ class PacketRelay():
             etherPacket = destMac + srcMac + self.etherType + ipPacket
             sock.send(etherPacket)
 
-    def encrypt(self, data):
-        if not self.aes:
-            return data
-
-        import Crypto
-        import Crypto.Random
-
-        iv = Crypto.Random.new().read(Crypto.Cipher.AES.block_size)
-        cipher = Crypto.Cipher.AES.new(self.aes, Crypto.Cipher.AES.MODE_CBC, iv)
-        return iv + cipher.encrypt(data) 
-
-    def decrypt(self, data):
-        if not self.aes:
-            return data
-
-        import Crypto
-
-        iv = data[:Crypto.Cipher.AES.block_size]
-        cipher = Crypto.Cipher.AES.new(self.aes, Crypto.Cipher.AES.MODE_CBC, iv)
-        return cipher.decrypt(data[Crypto.Cipher.AES.block_size:])
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
@@ -378,7 +397,7 @@ class PacketRelay():
                             self.connectFailure = time.time()
                             continue
 
-                        packet = self.decrypt(packet)
+                        packet = self.aes.decrypt(packet)
 
                         addr = socket.inet_ntoa(packet[:4])
                         data = packet[4:]
@@ -389,7 +408,7 @@ class PacketRelay():
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
-                    packet = self.encrypt(socket.inet_aton(addr) + data)
+                    packet = self.aes.encrypt(socket.inet_aton(addr) + data)
                     try:
                         self.connection.sendall(self.MAGIC + struct.pack('!H', len(packet)) + packet)
                         if self.connecting:
