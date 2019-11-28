@@ -127,7 +127,7 @@ class Cipher():
         import hashlib
 
         self.blockSize = Crypto.Cipher.AES.block_size
-        self.key = hashlib.sha256(key).digest()
+        self.key = hashlib.sha256(key.encode()).digest()
 
     @staticmethod
     def strToInt(s):
