@@ -293,6 +293,14 @@ class PacketRelay():
             etherPacket = destMac + srcMac + self.etherType + ipPacket
             sock.send(etherPacket)
 
+    def encrypt(self, data):
+        if not self.aes:
+            return data
+
+    def decrypt(self, data):
+        if not self.aes:
+            return data
+
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
@@ -327,7 +335,7 @@ class PacketRelay():
                         receivingInterface = 'remote'
                         self.connection.setblocking(1)
                         try:
-                            (data, _) = s.recvfrom(len(self.MAGIC)+4+2, socket.MSG_WAITALL)
+                            (data, _) = s.recvfrom(len(self.MAGIC)+2, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
@@ -348,24 +356,29 @@ class PacketRelay():
                             self.connectFailure = time.time()
                             continue
 
-                        addr = socket.inet_ntoa(data[len(self.MAGIC):len(self.MAGIC)+4])
-                        size = struct.unpack('!H', data[len(self.MAGIC)+4:len(self.MAGIC)+6])[0]
-
+                        size = struct.unpack('!H', data[len(self.MAGIC):len(self.MAGIC)+4])[0]
                         try:
-                            (data, _) = s.recvfrom(size, socket.MSG_WAITALL)
+                            (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
                             self.connectFailure = time.time()
                             continue
+
+                        packet = self.decrypt(packet)
+
+                        addr = socket.inet_ntoa(packet[:4])
+                        data = packet[4:]
+
                     else:
                         receivingInterface = 'local'
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
+                    packet = self.encrypt(socket.inet_aton(addr) + data)
                     try:
-                        self.connection.sendall(self.MAGIC + socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                        self.connection.sendall(self.MAGIC + struct.pack('!H', len(packet)) + packet)
                         if self.connecting:
                             self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
                             self.connecting = False
