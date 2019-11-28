@@ -302,7 +302,11 @@ class PacketRelay():
                 additionalListeners.append(self.listenSock)
             if self.connection:
                 additionalListeners.append(self.connection)
-            (inputready, _, _) = select.select(self.receivers + additionalListeners, [], [])
+
+            try:
+                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [])
+            except KeyboardInterrupt:
+                break
             for s in inputready:
                 if s == self.listenSock:
                     (self.connection, remoteAddr) = s.accept()
