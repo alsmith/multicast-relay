@@ -2,6 +2,7 @@
 
 import argparse
 import binascii
+import errno
 import os
 import re
 import select
@@ -124,7 +125,7 @@ class PacketRelay():
     SSDP_MCAST_PORT = 1900
     SSDP_UNICAST_PORT = 1901
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, logger):
+    def __init__(self, interfaces, waitForIP, ttl, oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther, ssdpUnicastAddr, masquerade, listen, remote, remotePort, remoteRetry, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -148,16 +149,37 @@ class PacketRelay():
         self.listenSock = None
         self.remoteAddr = remote
         self.remotePort = remotePort
+        self.remoteRetry = remoteRetry
         self.connection = None
+        self.connecting = False
+        self.connectFailure = None
 
-        if listen:
+        if self.listenAddr:
             self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.listenSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.listenSock.bind(('0.0.0.0', self.remotePort))
             self.listenSock.listen(0)
-        elif remote:
-            self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        elif self.remoteAddr:
+            self.connectRemote()
+
+    def connectRemote(self):
+        # Attempt reconnection at most once every N seconds
+        if self.connectFailure and self.connectFailure > time.time()-self.remoteRetry:
+            return
+
+        self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.connection.setblocking(0)
+        self.logger.info('REMOTE: Connecting to remote %s' % self.remoteAddr)
+        self.connecting = True
+        try:
             self.connection.connect((self.remoteAddr, self.remotePort))
+        except socket.error as e:
+            if e.errno == errno.EINPROGRESS:
+                pass
+            else:
+                self.connection = None
+                self.connecting = False
+                self.connectFailure = time.time()
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -272,6 +294,9 @@ class PacketRelay():
         #   (devices tend to retry SSDP queries multiple times anyway)
         recentSsdpSearchSrc = {}
         while True:
+            if self.remoteAddr and not self.connection:
+                self.connectRemote()
+
             additionalListeners = []
             if self.listenSock:
                 additionalListeners.append(self.listenSock)
@@ -289,18 +314,20 @@ class PacketRelay():
                     continue
                 else:
                     if s == self.connection:
+                        self.connection.setblocking(1)
                         try:
                             (data, addr) = s.recvfrom(6, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
+                            self.connectFailure = time.time()
                             continue
 
                         if not data:
-                            # TODO: attempt reconnection, in a non-blocking fashion of course
-                            self.logger.info('REMOTE: Connection closed')
                             s.close()
+                            self.logger.info('REMOTE: Connection closed')
                             self.connection = None
+                            self.connectFailure = time.time()
                             continue
 
                         addr = socket.inet_ntoa(data[0:4])
@@ -311,13 +338,27 @@ class PacketRelay():
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.connection = None
+                            self.connectFailure = time.time()
                             continue
                     else:
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
                 if self.connection and s != self.connection:
-                    self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                    try:
+                        self.connection.sendall(socket.inet_aton(addr) + struct.pack('!H', len(data)) + data)
+                        if self.connecting:
+                            self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
+                            self.connecting = False
+                    except socket.error as e:
+                        if e.errno == errno.EAGAIN:
+                            pass
+                        else:
+                            self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
+                            self.connection = None
+                            self.connecting = False
+                            self.connectFailure = time.time()
+                            continue
 
                 # Use IP checksum information to see if we have already seen this
                 # packet, since once we have retransmitted it on an interface
@@ -586,6 +627,8 @@ def main():
                         help='Relay packets to remote multicast-relay on A.B.C.D.')
     parser.add_argument('--remotePort', type=int, default=1900,
                         help='Use this port to listen/connect to.')
+    parser.add_argument('--remoteRetry', type=int, default=5,
+                        help='If the remote connection is terminated, retry at least N seconds later.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--logfile',
@@ -630,7 +673,7 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, logger)
+    packetRelay = PacketRelay(args.interfaces, args.wait, args.ttl, args.oneInterface, args.homebrewNetifaces, args.ifNameStructLen, args.allowNonEther, args.ssdpUnicastAddr, args.masquerade, args.listen, args.remote, args.remotePort, args.remoteRetry, logger)
     for relay in relays:
         try:
             (addr, port) = relay[0].split(':')
