@@ -280,7 +280,7 @@ class PacketRelay():
         # Format:
         # IP address       HW type     Flags       HW address            Mask     Device
         # 192.168.0.1      0x1         0x2         18:90:22:bf:3c:23     *        wlp2s0
-        matches = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s.*\s(([a-fA-F\d]{1,2}\:){5}[a-fA-F\d]{1,2})", arpTable)
+        matches = re.findall(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s.*\s(([a-fA-F\d]{1,2}\:){5}[a-fA-F\d]{1,2})', arpTable)
 
         # We end up with tuples of 3 groups: (ip, mac, one_of_the_mac_sub_group)
         # We remove the 3rd one which allows us to create a dictionary:
@@ -505,7 +505,7 @@ class PacketRelay():
                     # It's possible (though unlikely) we can't resolve the MAC if it's unicast.
                     # In that case, we can't relay the packet.
                     if not destMac:
-                        self.logger.info("DEBUG: could not resolve mac of IP '%s'" % dstAddr)
+                        self.logger.info('DEBUG: could not resolve mac for %s' % dstAddr)
                         continue
 
                 # Work out the name of the interface we received the packet on.
