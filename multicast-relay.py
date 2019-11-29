@@ -401,6 +401,7 @@ class PacketRelay():
 
                         if magic != self.MAGIC:
                             self.logger.info('REMOTE: Garbage data received, closing connection.')
+                            s.close()
                             self.connection = None
                             self.connectFailure = time.time()
                             continue
