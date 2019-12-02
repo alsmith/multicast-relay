@@ -29,8 +29,12 @@ def main():
 
     try:
         while True:
-            data, addr = s.recvfrom(65507)
-            print addr, data
+            data, addr = s.recvfrom(65535)
+            try:
+                print '%s [%s]' % (socket.gethostbyaddr(addr[0])[0], addr[0])
+            except socket.herror:
+                print addr[0]
+            print data
     except socket.timeout:
         pass
 
