@@ -198,7 +198,7 @@ class PacketRelay():
         self.remoteRetry = remoteRetry
         self.aes = Cipher(aes)
 
-        self.connection = None
+        self.remoteConnections = []
         self.connecting = False
         self.connectFailure = None
 
@@ -215,19 +215,20 @@ class PacketRelay():
         if self.connectFailure and self.connectFailure > time.time()-self.remoteRetry:
             return
 
-        self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.connection.setblocking(0)
+        remoteConnection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        remoteConnection.setblocking(0)
         self.logger.info('REMOTE: Connecting to remote %s' % self.remoteAddr)
         self.connecting = True
         try:
-            self.connection.connect((self.remoteAddr, self.remotePort))
+            remoteConnection.connect((self.remoteAddr, self.remotePort))
         except socket.error as e:
             if e.errno == errno.EINPROGRESS:
                 pass
             else:
-                self.connection = None
                 self.connecting = False
                 self.connectFailure = time.time()
+        else:
+            self.remoteConnections.append(remoteConnection)
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -343,14 +344,14 @@ class PacketRelay():
         #   (devices tend to retry SSDP queries multiple times anyway)
         recentSsdpSearchSrc = {}
         while True:
-            if self.remoteAddr and not self.connection:
+            if self.remoteAddr and not self.remoteConnections:
                 self.connectRemote()
 
             additionalListeners = []
             if self.listenSock:
                 additionalListeners.append(self.listenSock)
-            if self.connection:
-                additionalListeners.append(self.connection)
+            if self.remoteConnections:
+                additionalListeners.extend(self.remoteConnections)
 
             try:
                 (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [])
@@ -358,29 +359,30 @@ class PacketRelay():
                 break
             for s in inputready:
                 if s == self.listenSock:
-                    (self.connection, remoteAddr) = s.accept()
+                    (remoteConnection, remoteAddr) = s.accept()
                     if remoteAddr[0] not in self.listenAddr:
                         self.logger.info('Refusing connection from %s - not in %s' % (remoteAddr[0], self.listenAddr))
-                        self.connection.close()
-                        self.connection = None
-                    self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
+                        remoteConnection.close()
+                    else:
+                        self.remoteConnections.append(remoteConnection)
+                        self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
                     continue
                 else:
-                    if s == self.connection:
+                    if s in self.remoteConnections:
                         receivingInterface = 'remote'
-                        self.connection.setblocking(1)
+                        s.setblocking(1)
                         try:
                             (data, _) = s.recvfrom(2, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
-                            self.connection = None
+                            self.remoteConnections.remove(s)
                             self.connectFailure = time.time()
                             continue
 
                         if not data:
                             s.close()
                             self.logger.info('REMOTE: Connection closed')
-                            self.connection = None
+                            self.remoteConnections.remove(s)
                             self.connectFailure = time.time()
                             continue
 
@@ -389,7 +391,7 @@ class PacketRelay():
                             (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
-                            self.connection = None
+                            self.remoteConnections.remove(s)
                             self.connectFailure = time.time()
                             continue
 
@@ -402,7 +404,7 @@ class PacketRelay():
                         if magic != self.MAGIC:
                             self.logger.info('REMOTE: Garbage data received, closing connection.')
                             s.close()
-                            self.connection = None
+                            self.remoteConnections.remove(s)
                             self.connectFailure = time.time()
                             continue
 
@@ -411,22 +413,25 @@ class PacketRelay():
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
-                if self.connection and s != self.connection:
+                if self.remoteConnections:
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
-                    try:
-                        self.connection.sendall(struct.pack('!H', len(packet)) + packet)
-                        if self.connecting:
-                            self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
-                            self.connecting = False
-                    except socket.error as e:
-                        if e.errno == errno.EAGAIN:
-                            pass
-                        else:
-                            self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
-                            self.connection = None
-                            self.connecting = False
-                            self.connectFailure = time.time()
+                    for remoteConnection in self.remoteConnections:
+                        if remoteConnection == s:
                             continue
+                        try:
+                            remoteConnection.sendall(struct.pack('!H', len(packet)) + packet)
+                            if self.connecting:
+                                self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
+                                self.connecting = False
+                        except socket.error as e:
+                            if e.errno == errno.EAGAIN:
+                                pass
+                            else:
+                                self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
+                                self.remoteConnections.remove(remoteConnection)
+                                self.connecting = False
+                                self.connectFailure = time.time()
+                                continue
 
                 eighthDataByte = data[8]
                 if sys.version_info > (3, 0):
