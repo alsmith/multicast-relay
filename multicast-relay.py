@@ -223,12 +223,10 @@ class PacketRelay():
             remoteConnection.connect((self.remoteAddr, self.remotePort))
         except socket.error as e:
             if e.errno == errno.EINPROGRESS:
-                pass
+                self.remoteConnections.append(remoteConnection)
             else:
                 self.connecting = False
                 self.connectFailure = time.time()
-        else:
-            self.remoteConnections.append(remoteConnection)
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
