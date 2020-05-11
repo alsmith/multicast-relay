@@ -193,7 +193,7 @@ class PacketRelay():
 
         self.listenAddr = listen
         self.listenSock = None
-        self.remoteAddrs = map(lambda remote: {'addr': remote, 'socket': None, 'connecting': False, 'connectFailure': None}, remotes)
+        self.remoteAddrs = map(lambda remote: {'addr': remote, 'socket': None, 'connecting': False, 'connectFailure': None}, remote)
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
         self.aes = Cipher(aes)
