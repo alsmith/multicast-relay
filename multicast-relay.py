@@ -210,7 +210,7 @@ class PacketRelay():
 
     def connectRemotes(self):
         for remote in self.remoteAddrs:
-            if remote['connected']:
+            if remote['socket']:
                 continue
 
             # Attempt reconnection at most once every N seconds
