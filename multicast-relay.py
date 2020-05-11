@@ -242,7 +242,7 @@ class PacketRelay():
                 remote['connectFailure'] = time.time()
 
     def remoteSockets(self):
-        sockets = self.remoteConnections + list(map(lambda remote: remote['socket'], filter(lambda remote: remote['socket'], self.remoteAddrs)))
+        return self.remoteConnections + list(map(lambda remote: remote['socket'], filter(lambda remote: remote['socket'], self.remoteAddrs)))
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
