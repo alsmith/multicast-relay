@@ -370,7 +370,7 @@ class PacketRelay():
             additionalListeners.extend(self.remoteSockets())
 
             try:
-                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [])
+                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [], 1)
             except KeyboardInterrupt:
                 break
             for s in inputready:
