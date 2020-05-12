@@ -171,7 +171,7 @@ class PacketRelay():
     def __init__(self, interfaces, waitForIP, ttl, oneInterface,
                  homebrewNetifaces, ifNameStructLen, allowNonEther,
                  ssdpUnicastAddr, masquerade, listen, remote, remotePort,
-                 remoteRetry, aes, logger):
+                 remoteRetry, noRemoteRelay, aes, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -199,6 +199,7 @@ class PacketRelay():
             self.remoteAddrs = []
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
+        self.noRemoteRelay = noRemoteRelay
         self.aes = Cipher(aes)
 
         self.remoteConnections = []
@@ -425,7 +426,7 @@ class PacketRelay():
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
-                if self.remoteSockets():
+                if not self.noRemoteRelay and self.remoteSockets():
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     for remoteConnection in self.remoteSockets():
                         if remoteConnection == s:
@@ -724,6 +725,8 @@ def main():
                         help='Use this port to listen/connect to.')
     parser.add_argument('--remoteRetry', type=int, default=5,
                         help='If the remote connection is terminated, retry at least N seconds later.')
+    parser.add_argument('--noRemoteRelay', action='store_true',
+                        help='Only relay packets on local interfaces: don\'t relay packets out of --remote connected relays.')
     parser.add_argument('--aes',
                         help='Encryption key for the connection to the remote multicast-relay.')
     parser.add_argument('--foreground', action='store_true',
@@ -783,6 +786,7 @@ def main():
                               remote            = args.remote,
                               remotePort        = args.remotePort,
                               remoteRetry       = args.remoteRetry,
+                              noRemoteRelay     = args.noRemoteRelay,
                               aes               = args.aes,
                               logger            = logger)
 
