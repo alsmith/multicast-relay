@@ -344,12 +344,32 @@ class PacketRelay():
 
         return data[:10] + struct.pack('!H', checksum) + data[12:]
 
+    @staticmethod
+    def computeUDPChecksum(ipHeader, udpHeader, data):
+        pseudoIPHeader = ipHeader[12:20]+struct.pack('x')+ipHeader[9]+udpHeader[4:6]
+
+        udpPacket = pseudoIPHeader+udpHeader[:6]+struct.pack('xx')+data
+        if len(udpPacket) % 2:
+            udpPacket += struct.pack('x')
+
+        # Recompute the UDP header checksum
+        checksum = 0
+        for i in range(0, len(udpPacket), 2):
+            checksum += struct.unpack('!H', udpPacket[i:i+2])[0]
+
+        while checksum > 0xffff:
+            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
+
+        checksum = ~checksum & 0xffff
+        return udpHeader[:6]+struct.pack('!H', checksum)
+
     def transmitPacket(self, sock, srcMac, destMac, ipHeaderLength, ipPacket):
         ipHeader  = ipPacket[:ipHeaderLength]
         udpHeader = ipPacket[ipHeaderLength:ipHeaderLength+8]
         data      = ipPacket[ipHeaderLength+8:]
-
         dontFragment = (ord(ipPacket[6]) & 0x40) >> 6
+
+        udpHeader = self.computeUDPChecksum(ipHeader, udpHeader, data)
 
         for boundary in range(0, len(data), self.udpMaxLength):
             dataFragment = data[boundary:boundary+self.udpMaxLength]
