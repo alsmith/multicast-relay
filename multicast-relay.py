@@ -458,7 +458,7 @@ class PacketRelay():
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
-                if not self.noRemoteRelay and self.remoteSockets():
+                if receivingInterface == 'local' or (not self.noRemoteRelay and self.remoteSockets()):
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     for remoteConnection in self.remoteSockets():
                         if remoteConnection == s:
