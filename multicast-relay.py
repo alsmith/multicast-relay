@@ -171,7 +171,7 @@ class PacketRelay():
     def __init__(self, interfaces, waitForIP, ttl, oneInterface,
                  homebrewNetifaces, ifNameStructLen, allowNonEther,
                  ssdpUnicastAddr, masquerade, listen, remote, remotePort,
-                 remoteRetry, aes, logger):
+                 remoteRetry, noRemoteRelay, aes, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -187,47 +187,66 @@ class PacketRelay():
         self.receivers = []
         self.etherAddrs = {}
         self.etherType = struct.pack('!H', 0x0800)
-        self.udpMaxLength = 1024
+        self.udpMaxLength = 1458
 
         self.recentChecksums = []
 
         self.listenAddr = listen
         self.listenSock = None
-        self.remoteAddr = remote
+        if remote:
+            self.remoteAddrs = list(map(lambda remote: {'addr': remote, 'socket': None, 'connecting': False, 'connectFailure': None}, remote))
+        else:
+            self.remoteAddrs = []
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
+        self.noRemoteRelay = noRemoteRelay
         self.aes = Cipher(aes)
 
-        self.connection = None
-        self.connecting = False
-        self.connectFailure = None
+        self.remoteConnections = []
 
         if self.listenAddr:
             self.listenSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.listenSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.listenSock.bind(('0.0.0.0', self.remotePort))
             self.listenSock.listen(0)
-        elif self.remoteAddr:
-            self.connectRemote()
+        elif self.remoteAddrs:
+            self.connectRemotes()
 
-    def connectRemote(self):
-        # Attempt reconnection at most once every N seconds
-        if self.connectFailure and self.connectFailure > time.time()-self.remoteRetry:
+    def connectRemotes(self):
+        for remote in self.remoteAddrs:
+            if remote['socket']:
+                continue
+
+            # Attempt reconnection at most once every N seconds
+            if remote['connectFailure'] and remote['connectFailure'] > time.time()-self.remoteRetry:
+                return
+
+            remoteConnection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            remoteConnection.setblocking(0)
+            self.logger.info('REMOTE: Connecting to remote %s' % remote['addr'])
+            remote['connecting'] = True
+            try:
+                remoteConnection.connect((remote['addr'], self.remotePort))
+            except socket.error as e:
+                if e.errno == errno.EINPROGRESS:
+                    remote['socket'] = remoteConnection
+                else:
+                    remote['connecting'] = False
+                    remote['connectFailure'] = time.time()
+
+    def removeConnection(self, s):
+        if s in self.remoteConnections:
+            self.remoteConnections.remove(s)
             return
 
-        self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.connection.setblocking(0)
-        self.logger.info('REMOTE: Connecting to remote %s' % self.remoteAddr)
-        self.connecting = True
-        try:
-            self.connection.connect((self.remoteAddr, self.remotePort))
-        except socket.error as e:
-            if e.errno == errno.EINPROGRESS:
-                pass
-            else:
-                self.connection = None
-                self.connecting = False
-                self.connectFailure = time.time()
+        for remote in self.remoteAddrs:
+            if remote['socket'] == s:
+                remote['socket'] = None
+                remote['connecting'] = False
+                remote['connectFailure'] = time.time()
+
+    def remoteSockets(self):
+        return self.remoteConnections + list(map(lambda remote: remote['socket'], filter(lambda remote: remote['socket'], self.remoteAddrs)))
 
     def addListener(self, addr, port, service):
         if self.isBroadcast(addr):
@@ -325,16 +344,48 @@ class PacketRelay():
 
         return data[:10] + struct.pack('!H', checksum) + data[12:]
 
+    @staticmethod
+    def computeUDPChecksum(ipHeader, udpHeader, data):
+        pseudoIPHeader = ipHeader[12:20]+struct.pack('x')+ipHeader[9]+udpHeader[4:6]
+
+        udpPacket = pseudoIPHeader+udpHeader[:6]+struct.pack('xx')+data
+        if len(udpPacket) % 2:
+            udpPacket += struct.pack('x')
+
+        # Recompute the UDP header checksum
+        checksum = 0
+        for i in range(0, len(udpPacket), 2):
+            checksum += struct.unpack('!H', udpPacket[i:i+2])[0]
+
+        while checksum > 0xffff:
+            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
+
+        checksum = ~checksum & 0xffff
+        return udpHeader[:6]+struct.pack('!H', checksum)
+
     def transmitPacket(self, sock, srcMac, destMac, ipHeaderLength, ipPacket):
         ipHeader  = ipPacket[:ipHeaderLength]
         udpHeader = ipPacket[ipHeaderLength:ipHeaderLength+8]
         data      = ipPacket[ipHeaderLength+8:]
+        dontFragment = (ord(ipPacket[6]) & 0x40) >> 6
+
+        udpHeader = self.computeUDPChecksum(ipHeader, udpHeader, data)
 
         for boundary in range(0, len(data), self.udpMaxLength):
-            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + data[boundary:boundary+self.udpMaxLength], ipHeaderLength)
+            dataFragment = data[boundary:boundary+self.udpMaxLength]
+            totalLength = len(ipHeader) + len(udpHeader) + len(dataFragment)
+            moreFragments = boundary+self.udpMaxLength < len(data)
+
+            flagsOffset = boundary & 0x1fff
+            if moreFragments:
+                flagsOffset |= 0x2000
+            elif dontFragment:
+                flagsOffset |= 0x4000
+
+            ipHeader = ipHeader[:2]+struct.pack('!H', totalLength)+ipHeader[4:6]+struct.pack('!H', flagsOffset)+ipHeader[8:]
+            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + dataFragment, ipHeaderLength)
             etherPacket = destMac + srcMac + self.etherType + ipPacket
             sock.send(etherPacket)
-
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
@@ -343,45 +394,43 @@ class PacketRelay():
         #   (devices tend to retry SSDP queries multiple times anyway)
         recentSsdpSearchSrc = {}
         while True:
-            if self.remoteAddr and not self.connection:
-                self.connectRemote()
+            if self.remoteAddrs:
+                self.connectRemotes()
 
             additionalListeners = []
             if self.listenSock:
                 additionalListeners.append(self.listenSock)
-            if self.connection:
-                additionalListeners.append(self.connection)
+            additionalListeners.extend(self.remoteSockets())
 
             try:
-                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [])
+                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [], 1)
             except KeyboardInterrupt:
                 break
             for s in inputready:
                 if s == self.listenSock:
-                    (self.connection, remoteAddr) = s.accept()
+                    (remoteConnection, remoteAddr) = s.accept()
                     if remoteAddr[0] not in self.listenAddr:
                         self.logger.info('Refusing connection from %s - not in %s' % (remoteAddr[0], self.listenAddr))
-                        self.connection.close()
-                        self.connection = None
-                    self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
+                        remoteConnection.close()
+                    else:
+                        self.remoteConnections.append(remoteConnection)
+                        self.logger.info('REMOTE: Accepted connection from %s' % remoteAddr[0])
                     continue
                 else:
-                    if s == self.connection:
+                    if s in self.remoteSockets():
                         receivingInterface = 'remote'
-                        self.connection.setblocking(1)
+                        s.setblocking(1)
                         try:
                             (data, _) = s.recvfrom(2, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
-                            self.connection = None
-                            self.connectFailure = time.time()
+                            self.removeConnection(s)
                             continue
 
                         if not data:
                             s.close()
                             self.logger.info('REMOTE: Connection closed')
-                            self.connection = None
-                            self.connectFailure = time.time()
+                            self.removeConnection(s)
                             continue
 
                         size = struct.unpack('!H', data)[0]
@@ -389,8 +438,7 @@ class PacketRelay():
                             (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
-                            self.connection = None
-                            self.connectFailure = time.time()
+                            self.removeConnection(s)
                             continue
 
                         packet = self.aes.decrypt(packet)
@@ -402,8 +450,7 @@ class PacketRelay():
                         if magic != self.MAGIC:
                             self.logger.info('REMOTE: Garbage data received, closing connection.')
                             s.close()
-                            self.connection = None
-                            self.connectFailure = time.time()
+                            self.remoteConnection(s)
                             continue
 
                     else:
@@ -411,22 +458,25 @@ class PacketRelay():
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
-                if self.connection and s != self.connection:
+                if not self.noRemoteRelay and self.remoteSockets():
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
-                    try:
-                        self.connection.sendall(struct.pack('!H', len(packet)) + packet)
-                        if self.connecting:
-                            self.logger.info('REMOTE: Connection to %s established' % self.remoteAddr)
-                            self.connecting = False
-                    except socket.error as e:
-                        if e.errno == errno.EAGAIN:
-                            pass
-                        else:
-                            self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
-                            self.connection = None
-                            self.connecting = False
-                            self.connectFailure = time.time()
+                    for remoteConnection in self.remoteSockets():
+                        if remoteConnection == s:
                             continue
+                        try:
+                            remoteConnection.sendall(struct.pack('!H', len(packet)) + packet)
+
+                            for remote in self.remoteAddrs:
+                                if remote['socket'] == remoteConnection and remote['connecting']:
+                                    self.logger.info('REMOTE: Connection to %s established' % remote['addr'])
+                                    remote['connecting'] = False
+                        except socket.error as e:
+                            if e.errno == errno.EAGAIN:
+                                pass
+                            else:
+                                self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
+                                self.removeConnection(remoteConnection)
+                                continue
 
                 eighthDataByte = data[8]
                 if sys.version_info > (3, 0):
@@ -518,6 +568,9 @@ class PacketRelay():
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
+                    if receivingInterface == tx['interface']:
+                        continue
+
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
 
@@ -698,12 +751,14 @@ def main():
                         help='Set TTL on outbound packets.')
     parser.add_argument('--listen', nargs='+',
                         help='Listen for a remote connection from one or more remote addresses A.B.C.D.')
-    parser.add_argument('--remote',
-                        help='Relay packets to remote multicast-relay on A.B.C.D.')
+    parser.add_argument('--remote', nargs='+',
+                        help='Relay packets to remote multicast-relay(s) on A.B.C.D.')
     parser.add_argument('--remotePort', type=int, default=1900,
                         help='Use this port to listen/connect to.')
     parser.add_argument('--remoteRetry', type=int, default=5,
                         help='If the remote connection is terminated, retry at least N seconds later.')
+    parser.add_argument('--noRemoteRelay', action='store_true',
+                        help='Only relay packets on local interfaces: don\'t relay packets out of --remote connected relays.')
     parser.add_argument('--aes',
                         help='Encryption key for the connection to the remote multicast-relay.')
     parser.add_argument('--foreground', action='store_true',
@@ -763,6 +818,7 @@ def main():
                               remote            = args.remote,
                               remotePort        = args.remotePort,
                               remoteRetry       = args.remoteRetry,
+                              noRemoteRelay     = args.noRemoteRelay,
                               aes               = args.aes,
                               logger            = logger)
 
