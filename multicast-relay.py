@@ -187,7 +187,7 @@ class PacketRelay():
         self.receivers = []
         self.etherAddrs = {}
         self.etherType = struct.pack('!H', 0x0800)
-        self.udpMaxLength = 1024
+        self.udpMaxLength = 1458
 
         self.recentChecksums = []
 
@@ -349,11 +349,23 @@ class PacketRelay():
         udpHeader = ipPacket[ipHeaderLength:ipHeaderLength+8]
         data      = ipPacket[ipHeaderLength+8:]
 
+        dontFragment = (ord(ipPacket[6]) & 0x40) >> 6
+
         for boundary in range(0, len(data), self.udpMaxLength):
-            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + data[boundary:boundary+self.udpMaxLength], ipHeaderLength)
+            dataFragment = data[boundary:boundary+self.udpMaxLength]
+            totalLength = len(ipHeader) + len(udpHeader) + len(dataFragment)
+            moreFragments = boundary+self.udpMaxLength < len(data)
+
+            flagsOffset = boundary & 0x1fff
+            if moreFragments:
+                flagsOffset |= 0x2000
+            elif dontFragment:
+                flagsOffset |= 0x4000
+
+            ipHeader = ipHeader[:2]+struct.pack('!H', totalLength)+ipHeader[4:6]+struct.pack('!H', flagsOffset)+ipHeader[8:]
+            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + dataFragment, ipHeaderLength)
             etherPacket = destMac + srcMac + self.etherType + ipPacket
             sock.send(etherPacket)
-
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
