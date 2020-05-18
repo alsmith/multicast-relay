@@ -193,7 +193,10 @@ class PacketRelay():
 
         self.listenAddr = listen
         self.listenSock = None
-        self.remoteAddrs = map(lambda remote: {'addr': remote, 'socket': None, 'connecting': False, 'connectFailure': None}, remote)
+        if remote:
+            self.remoteAddrs = list(map(lambda remote: {'addr': remote, 'socket': None, 'connecting': False, 'connectFailure': None}, remote))
+        else:
+            self.remoteAddrs = []
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
         self.aes = Cipher(aes)
@@ -230,7 +233,7 @@ class PacketRelay():
                     remote['connecting'] = False
                     remote['connectFailure'] = time.time()
 
-    def removeRemote(self, s):
+    def removeConnection(self, s):
         if s in self.remoteConnections:
             self.remoteConnections.remove(s)
             return
@@ -367,7 +370,7 @@ class PacketRelay():
             additionalListeners.extend(self.remoteSockets())
 
             try:
-                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [])
+                (inputready, _, _) = select.select(additionalListeners + self.receivers, [], [], 1)
             except KeyboardInterrupt:
                 break
             for s in inputready:
@@ -531,6 +534,9 @@ class PacketRelay():
                             receivingInterface = tx['interface']
 
                 for tx in self.transmitters:
+                    if receivingInterface == tx['interface']:
+                        continue
+
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
