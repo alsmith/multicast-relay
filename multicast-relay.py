@@ -171,7 +171,7 @@ class PacketRelay():
     def __init__(self, interfaces, waitForIP, ttl, oneInterface,
                  homebrewNetifaces, ifNameStructLen, allowNonEther,
                  ssdpUnicastAddr, masquerade, listen, remote, remotePort,
-                 remoteRetry, aes, logger):
+                 remoteRetry, noRemoteRelay, aes, logger):
         self.interfaces = interfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
@@ -187,7 +187,7 @@ class PacketRelay():
         self.receivers = []
         self.etherAddrs = {}
         self.etherType = struct.pack('!H', 0x0800)
-        self.udpMaxLength = 1024
+        self.udpMaxLength = 1458
 
         self.recentChecksums = []
 
@@ -199,6 +199,7 @@ class PacketRelay():
             self.remoteAddrs = []
         self.remotePort = remotePort
         self.remoteRetry = remoteRetry
+        self.noRemoteRelay = noRemoteRelay
         self.aes = Cipher(aes)
 
         self.remoteConnections = []
@@ -343,16 +344,48 @@ class PacketRelay():
 
         return data[:10] + struct.pack('!H', checksum) + data[12:]
 
+    @staticmethod
+    def computeUDPChecksum(ipHeader, udpHeader, data):
+        pseudoIPHeader = ipHeader[12:20]+struct.pack('x')+ipHeader[9]+udpHeader[4:6]
+
+        udpPacket = pseudoIPHeader+udpHeader[:6]+struct.pack('xx')+data
+        if len(udpPacket) % 2:
+            udpPacket += struct.pack('x')
+
+        # Recompute the UDP header checksum
+        checksum = 0
+        for i in range(0, len(udpPacket), 2):
+            checksum += struct.unpack('!H', udpPacket[i:i+2])[0]
+
+        while checksum > 0xffff:
+            checksum = (checksum & 0xffff) + ((checksum - (checksum & 0xffff)) >> 16)
+
+        checksum = ~checksum & 0xffff
+        return udpHeader[:6]+struct.pack('!H', checksum)
+
     def transmitPacket(self, sock, srcMac, destMac, ipHeaderLength, ipPacket):
         ipHeader  = ipPacket[:ipHeaderLength]
         udpHeader = ipPacket[ipHeaderLength:ipHeaderLength+8]
         data      = ipPacket[ipHeaderLength+8:]
+        dontFragment = (ord(ipPacket[6]) & 0x40) >> 6
+
+        udpHeader = self.computeUDPChecksum(ipHeader, udpHeader, data)
 
         for boundary in range(0, len(data), self.udpMaxLength):
-            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + data[boundary:boundary+self.udpMaxLength], ipHeaderLength)
+            dataFragment = data[boundary:boundary+self.udpMaxLength]
+            totalLength = len(ipHeader) + len(udpHeader) + len(dataFragment)
+            moreFragments = boundary+self.udpMaxLength < len(data)
+
+            flagsOffset = boundary & 0x1fff
+            if moreFragments:
+                flagsOffset |= 0x2000
+            elif dontFragment:
+                flagsOffset |= 0x4000
+
+            ipHeader = ipHeader[:2]+struct.pack('!H', totalLength)+ipHeader[4:6]+struct.pack('!H', flagsOffset)+ipHeader[8:]
+            ipPacket = self.computeIPChecksum(ipHeader + udpHeader + dataFragment, ipHeaderLength)
             etherPacket = destMac + srcMac + self.etherType + ipPacket
             sock.send(etherPacket)
-
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
@@ -425,7 +458,7 @@ class PacketRelay():
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
-                if self.remoteSockets():
+                if not self.noRemoteRelay and self.remoteSockets():
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     for remoteConnection in self.remoteSockets():
                         if remoteConnection == s:
@@ -538,6 +571,9 @@ class PacketRelay():
                         continue
 
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
+                    if receivingInterface == tx['interface']:
+                        continue
+
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
 
@@ -724,6 +760,8 @@ def main():
                         help='Use this port to listen/connect to.')
     parser.add_argument('--remoteRetry', type=int, default=5,
                         help='If the remote connection is terminated, retry at least N seconds later.')
+    parser.add_argument('--noRemoteRelay', action='store_true',
+                        help='Only relay packets on local interfaces: don\'t relay packets out of --remote connected relays.')
     parser.add_argument('--aes',
                         help='Encryption key for the connection to the remote multicast-relay.')
     parser.add_argument('--foreground', action='store_true',
@@ -783,6 +821,7 @@ def main():
                               remote            = args.remote,
                               remotePort        = args.remotePort,
                               remoteRetry       = args.remoteRetry,
+                              noRemoteRelay     = args.noRemoteRelay,
                               aes               = args.aes,
                               logger            = logger)
 
