@@ -385,7 +385,10 @@ class PacketRelay():
             ipHeader = ipHeader[:2]+struct.pack('!H', totalLength)+ipHeader[4:6]+struct.pack('!H', flagsOffset)+ipHeader[8:]
             ipPacket = self.computeIPChecksum(ipHeader + udpHeader + dataFragment, ipHeaderLength)
             etherPacket = destMac + srcMac + self.etherType + ipPacket
-            sock.send(etherPacket)
+            try:
+                sock.send(etherPacket)
+            except Exception as e:
+                self.logger.info('Error sending packet: %s' % str(e))
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
