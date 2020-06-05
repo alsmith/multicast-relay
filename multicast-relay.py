@@ -168,11 +168,12 @@ class PacketRelay():
     MAGIC             = b'MRLY'
     IPV4LEN           = len(socket.inet_aton('0.0.0.0'))
 
-    def __init__(self, interfaces, waitForIP, ttl, oneInterface,
+    def __init__(self, interfaces, noTransmitInterfaces, waitForIP, ttl, oneInterface,
                  homebrewNetifaces, ifNameStructLen, allowNonEther,
                  ssdpUnicastAddr, masquerade, listen, remote, remotePort,
                  remoteRetry, noRemoteRelay, aes, logger):
         self.interfaces = interfaces
+        self.noTransmitInterfaces = noTransmitInterfaces
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
         self.ttl = ttl
@@ -274,10 +275,11 @@ class PacketRelay():
 
             # Generate a transmitter socket. Each interface
             # requires its own transmitting socket.
-            tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-            tx.bind((ifname, 0))
+            if interface not in self.noTransmitInterfaces:
+                tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+                tx.bind((ifname, 0))
 
-            self.transmitters.append({'relay': {'addr': addr, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
+                self.transmitters.append({'relay': {'addr': addr, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
 
         rx.bind((addr, port))
         self.receivers.append(rx)
@@ -730,7 +732,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
                         help='Relay between these interfaces (minimum 2).')
-    parser.add_argument('--ssdpUnicastAddr', required=False,
+    parser.add_argument('--noTransmitInterfaces', nargs='+',
+                        help='Do not relay packets out on these interfaces (optional).')
+    parser.add_argument('--ssdpUnicastAddr',
                         help='IP address to listen to SSDP unicast replies, which will be'
                              ' relayed to the IP that sent the SSDP multicast query.')
     parser.add_argument('--oneInterface', action='store_true',
@@ -811,22 +815,23 @@ def main():
         for relay in args.relay:
             relays.add((relay, None))
 
-    packetRelay = PacketRelay(interfaces        = args.interfaces,
-                              waitForIP         = args.wait,
-                              ttl               = args.ttl,
-                              oneInterface      = args.oneInterface,
-                              homebrewNetifaces = args.homebrewNetifaces,
-                              ifNameStructLen   = args.ifNameStructLen,
-                              allowNonEther     = args.allowNonEther,
-                              ssdpUnicastAddr   = args.ssdpUnicastAddr,
-                              masquerade        = args.masquerade,
-                              listen            = args.listen,
-                              remote            = args.remote,
-                              remotePort        = args.remotePort,
-                              remoteRetry       = args.remoteRetry,
-                              noRemoteRelay     = args.noRemoteRelay,
-                              aes               = args.aes,
-                              logger            = logger)
+    packetRelay = PacketRelay(interfaces           = args.interfaces,
+                              noTransmitInterfaces = args.noTransmitInterfaces,
+                              waitForIP            = args.wait,
+                              ttl                  = args.ttl,
+                              oneInterface         = args.oneInterface,
+                              homebrewNetifaces    = args.homebrewNetifaces,
+                              ifNameStructLen      = args.ifNameStructLen,
+                              allowNonEther        = args.allowNonEther,
+                              ssdpUnicastAddr      = args.ssdpUnicastAddr,
+                              masquerade           = args.masquerade,
+                              listen               = args.listen,
+                              remote               = args.remote,
+                              remotePort           = args.remotePort,
+                              remoteRetry          = args.remoteRetry,
+                              noRemoteRelay        = args.noRemoteRelay,
+                              aes                  = args.aes,
+                              logger               = logger)
 
     for relay in relays:
         try:
