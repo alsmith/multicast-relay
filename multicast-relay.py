@@ -346,7 +346,7 @@ class PacketRelay():
 
     @staticmethod
     def computeUDPChecksum(ipHeader, udpHeader, data):
-        pseudoIPHeader = ipHeader[12:20]+struct.pack('x')+ipHeader[9:9]+udpHeader[4:6]
+        pseudoIPHeader = ipHeader[12:20]+struct.pack('x')+ipHeader[9:10]+udpHeader[4:6]
 
         udpPacket = pseudoIPHeader+udpHeader[:6]+struct.pack('xx')+data
         if len(udpPacket) % 2:
