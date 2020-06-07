@@ -25,16 +25,16 @@ def main():
         s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(args.ifAddr))
 
     s.settimeout(2)
-    s.sendto(msearch, ('239.255.255.250', 1900))
+    s.sendto(msearch.encode('utf-8'), ('239.255.255.250', 1900))
 
     try:
         while True:
             data, addr = s.recvfrom(65535)
             try:
-                print '%s [%s]' % (socket.gethostbyaddr(addr[0])[0], addr[0])
+                print('%s [%s]' % (socket.gethostbyaddr(addr[0])[0], addr[0]))
             except socket.herror:
-                print addr[0]
-            print data
+                print(addr[0])
+            print(data)
     except socket.timeout:
         pass
 
