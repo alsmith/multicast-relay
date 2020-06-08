@@ -3,6 +3,7 @@
 import argparse
 import binascii
 import errno
+import json
 import os
 import re
 import select
@@ -168,12 +169,18 @@ class PacketRelay():
     MAGIC             = b'MRLY'
     IPV4LEN           = len(socket.inet_aton('0.0.0.0'))
 
-    def __init__(self, interfaces, noTransmitInterfaces, waitForIP, ttl, oneInterface,
-                 homebrewNetifaces, ifNameStructLen, allowNonEther,
+    def __init__(self, interfaces, noTransmitInterfaces, ifFilter, waitForIP, ttl,
+                 oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther,
                  ssdpUnicastAddr, masquerade, listen, remote, remotePort,
                  remoteRetry, noRemoteRelay, aes, logger):
         self.interfaces = interfaces
-        self.noTransmitInterfaces = noTransmitInterfaces
+        self.noTransmitInterfaces = noTransmitInterfaces or []
+
+        if ifFilter:
+            with open(ifFilter) as fd:
+                self.ifFilter = json.loads(fd.read().replace('\n', ' ').strip())
+        else:
+            self.ifFilter = {}
         self.ssdpUnicastAddr = ssdpUnicastAddr
         self.wait = waitForIP
         self.ttl = ttl
@@ -579,6 +586,14 @@ class PacketRelay():
                     if receivingInterface == tx['interface']:
                         continue
 
+                    transmit = True
+                    for net in self.ifFilter:
+                        (network, netmask) = net.split('/')
+                        if self.onNetwork(srcAddr, network, self.cidrToNetmask(int(netmask))) and tx['interface'] not in self.ifFilter[net]:
+                            transmit = False
+                    if not transmit:
+                        continue
+
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
 
@@ -728,12 +743,18 @@ class PacketRelay():
         broadcastMac = 0xffffffffffff
         return struct.pack('!Q', broadcastMac)[2:]
 
+    @staticmethod
+    def cidrToNetmask(bits):
+        return socket.inet_ntoa(struct.pack('!I', (1 << 32) - (1 << (32 - bits))))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
                         help='Relay between these interfaces (minimum 2).')
     parser.add_argument('--noTransmitInterfaces', nargs='+',
-                        help='Do not relay packets out on these interfaces (optional).')
+                        help='Do not relay packets via these interfaces, listen only.')
+    parser.add_argument('--ifFilter',
+                        help='JSON file specifying which interface(s) a particular source IP can relay to.')
     parser.add_argument('--ssdpUnicastAddr',
                         help='IP address to listen to SSDP unicast replies, which will be'
                              ' relayed to the IP that sent the SSDP multicast query.')
@@ -817,6 +838,7 @@ def main():
 
     packetRelay = PacketRelay(interfaces           = args.interfaces,
                               noTransmitInterfaces = args.noTransmitInterfaces,
+                              ifFilter             = args.ifFilter,
                               waitForIP            = args.wait,
                               ttl                  = args.ttl,
                               oneInterface         = args.oneInterface,
