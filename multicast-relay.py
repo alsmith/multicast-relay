@@ -166,13 +166,15 @@ class PacketRelay():
     SSDP_MCAST_ADDR   = '239.255.255.250'
     SSDP_MCAST_PORT   = 1900
     SSDP_UNICAST_PORT = 1901
+    MDNS_MCAST_ADDR   = '224.0.0.251'
+    MDNS_MCAST_PORT   = 5353
     MAGIC             = b'MRLY'
     IPV4LEN           = len(socket.inet_aton('0.0.0.0'))
 
     def __init__(self, interfaces, noTransmitInterfaces, ifFilter, waitForIP, ttl,
                  oneInterface, homebrewNetifaces, ifNameStructLen, allowNonEther,
-                 ssdpUnicastAddr, masquerade, listen, remote, remotePort,
-                 remoteRetry, noRemoteRelay, aes, logger):
+                 ssdpUnicastAddr, mdnsForceUnicast, masquerade, listen, remote,
+                 remotePort, remoteRetry, noRemoteRelay, aes, logger):
         self.interfaces = interfaces
         self.noTransmitInterfaces = noTransmitInterfaces or []
 
@@ -182,6 +184,7 @@ class PacketRelay():
         else:
             self.ifFilter = {}
         self.ssdpUnicastAddr = ssdpUnicastAddr
+        self.mdnsForceUnicast = mdnsForceUnicast
         self.wait = waitForIP
         self.ttl = ttl
         self.oneInterface = oneInterface
@@ -333,6 +336,35 @@ class PacketRelay():
         udpHeader = struct.pack('!4H', srcPort, dstPort, udpLength, 0)
 
         return ipHeader + udpHeader + udpData
+
+    @staticmethod
+    def mdnsSetUnicastBit(data, ipHeaderLength):
+        headers = data[:ipHeaderLength+8]
+        udpData = data[ipHeaderLength+8:]
+
+        flags = struct.unpack('!H', udpData[2:4])[0]
+        if flags & 0x8000 != 0:
+            return data
+
+        queries = struct.unpack('!H', udpData[4:6])[0]
+
+        queryCount = 0
+        ptr = 12
+        while True:
+            labelLength = struct.unpack('B', udpData[ptr:ptr+1])[0]
+            if not labelLength & 0x3f:
+                if labelLength & 0xc0:
+                    ptr += 1
+                queryCount += 1
+                data = struct.unpack('!H', udpData[ptr+3:ptr+5])[0]
+                udpData = udpData[:ptr+3] + struct.pack('!H', data | 0x8000) + udpData[ptr+5:]
+                if queryCount == queries:
+                    break
+                ptr += 5
+            else:
+                ptr += labelLength+1
+
+        return headers + udpData
 
     def computeIPChecksum(self, data, ipHeaderLength):
         # Zero out current checksum
@@ -535,6 +567,9 @@ class PacketRelay():
                 # FIXME: record more than one?
                 destMac = None
                 modifiedData = None
+
+                if self.mdnsForceUnicast and dstAddr == PacketRelay.MDNS_MCAST_ADDR and dstPort == PacketRelay.MDNS_MCAST_PORT:
+                    data = PacketRelay.mdnsSetUnicastBit(data, ipHeaderLength)
 
                 if self.ssdpUnicastAddr and dstAddr == PacketRelay.SSDP_MCAST_ADDR and dstPort == PacketRelay.SSDP_MCAST_PORT and (re.search(b'M-SEARCH', data) or re.search(b'NOTIFY', data)):
                     recentSsdpSearchSrc = {'addr': srcAddr, 'port': srcPort}
@@ -764,6 +799,8 @@ def main():
                         help='Relay additional multicast address(es).')
     parser.add_argument('--noMDNS', action='store_true',
                         help='Do not relay mDNS packets.')
+    parser.add_argument('--mdnsForceUnicast', action='store_true',
+                        help='Force mDNS packets to have the UNICAST-RESPONSE bit set.')
     parser.add_argument('--noSSDP', action='store_true',
                         help='Do not relay SSDP packets.')
     parser.add_argument('--noSonosDiscovery', action='store_true',
@@ -823,7 +860,7 @@ def main():
 
     relays = set()
     if not args.noMDNS:
-        relays.add(('224.0.0.251:5353', 'mDNS'))
+        relays.add(('%s:%d' % (PacketRelay.MDNS_MCAST_ADDR, PacketRelay.MDNS_MCAST_PORT), 'mDNS'))
     if not args.noSSDP:
         relays.add(('%s:%d' % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT), 'SSDP'))
     if not args.noSonosDiscovery:
@@ -846,6 +883,7 @@ def main():
                               ifNameStructLen      = args.ifNameStructLen,
                               allowNonEther        = args.allowNonEther,
                               ssdpUnicastAddr      = args.ssdpUnicastAddr,
+                              mdnsForceUnicast     = args.mdnsForceUnicast,
                               masquerade           = args.masquerade,
                               listen               = args.listen,
                               remote               = args.remote,
