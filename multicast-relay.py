@@ -428,9 +428,13 @@ class PacketRelay():
 
             ipHeader = ipHeader[:2]+struct.pack('!H', totalLength)+ipHeader[4:6]+struct.pack('!H', flagsOffset)+ipHeader[8:]
             ipPacket = self.computeIPChecksum(ipHeader + udpHeader + dataFragment, ipHeaderLength)
-            etherPacket = destMac + srcMac + self.etherType + ipPacket
+
             try:
-                sock.send(etherPacket)
+                if srcMac != binascii.unhexlify('00:00:00:00:00:00'.replace(':', '')):
+                    etherPacket = destMac + srcMac + self.etherType + ipPacket
+                    sock.send(etherPacket)
+                else:
+                    sock.send(ipPacket)
             except Exception as e:
                 self.logger.info('Error sending packet: %s' % str(e))
 
