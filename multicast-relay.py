@@ -436,7 +436,10 @@ class PacketRelay():
                 else:
                     sock.send(ipPacket)
             except Exception as e:
-                self.logger.info('Error sending packet: %s' % str(e))
+                if e.errno == errno.ENXIO:
+                    raise
+                else:
+                    self.logger.info('Error sending packet: %s' % str(e))
 
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
@@ -651,7 +654,21 @@ class PacketRelay():
                                                                                                           tx['interface'], 
                                                                                                           tx['addr']))
 
-                        self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
+                        try:
+                            self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
+                        except Exception as e:
+                            if e.errno == errno.ENXIO:
+                                try:
+                                    (ifname, mac, ip, netmask) = self.getInterface(tx['interface'])
+                                    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+                                    s.bind((ifname, 0))
+                                    tx['mac'] = mac 
+                                    tx['netmask'] = netmask 
+                                    tx['addr'] = ip 
+                                    tx['socket'] = s
+                                    self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
+                                except Exception as e:
+                                    self.logger.info('Error sending packet: %s' % str(e))
 
     def getInterface(self, interface):
         ifname = None
