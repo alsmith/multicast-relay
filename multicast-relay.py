@@ -630,7 +630,7 @@ class PacketRelay():
 
                     transmit = True
                     for net in self.ifFilter:
-                        (network, netmask) = net.split('/')
+                        (network, netmask) = '/' in net and net.split('/') or (net, '32')
                         if self.onNetwork(srcAddr, network, self.cidrToNetmask(int(netmask))) and tx['interface'] not in self.ifFilter[net]:
                             transmit = False
                     if not transmit:
