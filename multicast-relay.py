@@ -329,7 +329,7 @@ class PacketRelay():
         dstPort = dstPort if dstPort else struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
 
         # Recreate the packet
-        ipHeader = data[:ipHeaderLength-8] + socket.inet_aton(srcAddr) + socket.inet_aton(dstAddr) + data[ipHeaderLength:]
+        ipHeader = data[:ipHeaderLength-8] + socket.inet_aton(srcAddr) + socket.inet_aton(dstAddr)
 
         udpData = data[ipHeaderLength+8:]
         udpLength = 8 + len(udpData)
