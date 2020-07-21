@@ -277,12 +277,7 @@ class PacketRelay():
             rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         for interface in self.interfaces:
-            (ifname, mac, ip, netmask) = self.getInterface(interface)
-
-            ipLong = PacketRelay.ip2long(ip)
-            netmaskLong = PacketRelay.ip2long(netmask)
-            broadcastLong = ipLong | (~netmaskLong& 0xffffffff)
-            broadcastIP = PacketRelay.long2ip(broadcastLong)
+            (ifname, mac, ip, netmask, broadcast) = self.getInterface(interface)
 
             # Add this interface to the receiving socket's list.
             if self.isBroadcast(addr):
@@ -290,10 +285,10 @@ class PacketRelay():
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-                rx.bind((broadcastIP, port))
+                rx.bind((broadcast, port))
 
                 self.receivers.append(rx)
-                listenIP = broadcastIP
+                listenIP = broadcast
 
             elif self.isMulticast(addr):
                 packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
@@ -685,7 +680,7 @@ class PacketRelay():
                         except Exception as e:
                             if e.errno == errno.ENXIO:
                                 try:
-                                    (ifname, mac, ip, netmask) = self.getInterface(tx['interface'])
+                                    (ifname, mac, ip, netmask, broadcast) = self.getInterface(tx['interface'])
                                     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
                                     s.bind((ifname, 0))
                                     tx['mac'] = mac
@@ -750,6 +745,11 @@ class PacketRelay():
             ip = addrs[self.nif.AF_INET][0]['addr']
             netmask = addrs[self.nif.AF_INET][0]['netmask']
 
+            ipLong = PacketRelay.ip2long(ip)
+            netmaskLong = PacketRelay.ip2long(netmask)
+            broadcastLong = ipLong | (~netmaskLong & 0xffffffff)
+            broadcast = PacketRelay.long2ip(broadcastLong)
+
             # If we've been given a virtual interface like eth0:0 then
             # netifaces might not be able to detect its MAC address so
             # lets at least try the parent interface and see if we can
@@ -769,7 +769,7 @@ class PacketRelay():
             # only use for a MAC address later is when we concoct a packet
             # to send, and at that point we need as binary data. Lets do
             # that conversion here.
-            return (ifname, binascii.unhexlify(mac.replace(':', '')), ip, netmask)
+            return (ifname, binascii.unhexlify(mac.replace(':', '')), ip, netmask, broadcast)
         except Exception as e:
             print('Error getting information about interface %s.' % ifname)
             print('Valid interfaces: %s' % ' '.join(self.nif.interfaces()))
