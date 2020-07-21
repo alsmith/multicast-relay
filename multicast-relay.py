@@ -269,19 +269,36 @@ class PacketRelay():
             self.etherAddrs[addr] = None
 
         # Set up the receiving socket and corresponding IP and interface information.
-        # One receiving socket is required per multicast address.
-        rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
-        rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # One receiving socket is required per multicast address. But for extra
+        # fun, one receiving socket for each network interface, if we're
+        # intercepting broadcast packets.
+        if self.isMulticast(addr):
+            rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+            rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         for interface in self.interfaces:
             (ifname, mac, ip, netmask) = self.getInterface(interface)
 
+            ipLong = PacketRelay.ip2long(ip)
+            netmaskLong = PacketRelay.ip2long(netmask)
+            broadcastLong = ipLong | (~netmaskLong& 0xffffffff)
+            broadcastIP = PacketRelay.long2ip(broadcastLong)
+
             # Add this interface to the receiving socket's list.
             if self.isBroadcast(addr):
+                rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+                rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+                rx.bind((broadcastIP, port))
+
+                self.receivers.append(rx)
+                listenIP = broadcastIP
+
             elif self.isMulticast(addr):
                 packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
                 rx.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, packedAddress)
+                listenIP = addr
 
             # Generate a transmitter socket. Each interface
             # requires its own transmitting socket.
@@ -289,10 +306,11 @@ class PacketRelay():
                 tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
                 tx.bind((ifname, 0))
 
-                self.transmitters.append({'relay': {'addr': addr, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'socket': tx, 'service': service})
+                self.transmitters.append({'relay': {'addr': listenIP, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'broadcast': broadcastIP, 'socket': tx, 'service': service})
 
-        rx.bind((addr, port))
-        self.receivers.append(rx)
+        if self.isMulticast(addr):
+            rx.bind((addr, port))
+            self.receivers.append(rx)
 
     @staticmethod
     def unicastIpToMac(ip, procNetArp=None):
@@ -617,11 +635,13 @@ class PacketRelay():
                         continue
 
                 # Work out the name of the interface we received the packet on.
+                broadcastPacket = False
                 if receivingInterface == 'local':
                     for tx in self.transmitters:
                         if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
                                 and self.onNetwork(addr, tx['addr'], tx['netmask']):
                             receivingInterface = tx['interface']
+                            broadcastPacket = (origDstAddr == tx['broadcast'])
 
                 for tx in self.transmitters:
                     # Re-transmit on all other interfaces than on the interface that we received this packet from...
@@ -636,6 +656,11 @@ class PacketRelay():
                             break
                     if not transmit:
                         continue
+
+                    if broadcastPacket:
+                        dstAddr = tx['broadcast']
+                        destMac = self.etherAddrs[PacketRelay.BROADCAST]
+                        origDstAddr = tx['broadcast']
 
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
@@ -652,7 +677,7 @@ class PacketRelay():
                                                                                                           ttl,
                                                                                                           dstAddr,
                                                                                                           dstPort,
-                                                                                                          tx['interface'], 
+                                                                                                          tx['interface'],
                                                                                                           tx['addr']))
 
                         try:
@@ -663,9 +688,9 @@ class PacketRelay():
                                     (ifname, mac, ip, netmask) = self.getInterface(tx['interface'])
                                     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
                                     s.bind((ifname, 0))
-                                    tx['mac'] = mac 
-                                    tx['netmask'] = netmask 
-                                    tx['addr'] = ip 
+                                    tx['mac'] = mac
+                                    tx['netmask'] = netmask
+                                    tx['addr'] = ip
                                     tx['socket'] = s
                                     self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
                                 except Exception as e:
@@ -764,8 +789,7 @@ class PacketRelay():
         """
         Is this IP address a broadcast address?
         """
-        ipLong = PacketRelay.ip2long(ip)
-        return ipLong == PacketRelay.ip2long(PacketRelay.BROADCAST)
+        return ip == PacketRelay.BROADCAST
 
     @staticmethod
     def ip2long(ip):
@@ -774,6 +798,13 @@ class PacketRelay():
         """
         packedIP = socket.inet_aton(ip)
         return struct.unpack('!L', packedIP)[0]
+
+    @staticmethod
+    def long2ip(ip):
+        """
+        Given an unsigned long turn it into an IP address
+        """
+        return socket.inet_ntoa(struct.pack('!I', ip))
 
     @staticmethod
     def onNetwork(ip, network, netmask):
@@ -886,7 +917,7 @@ def main():
     if not args.noSSDP:
         relays.add(('%s:%d' % (PacketRelay.SSDP_MCAST_ADDR, PacketRelay.SSDP_MCAST_PORT), 'SSDP'))
     if not args.noSonosDiscovery:
-        relays.add((PacketRelay.BROADCAST+':6969', 'Sonos Discovery'))
+        relays.add((PacketRelay.BROADCAST+':6969', 'Sonos Setup Discovery'))
 
     if args.ssdpUnicastAddr:
         relays.add(('%s:%d' % (args.ssdpUnicastAddr, PacketRelay.SSDP_UNICAST_PORT), 'SSDP Unicast'))
