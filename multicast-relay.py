@@ -301,7 +301,7 @@ class PacketRelay():
                 tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
                 tx.bind((ifname, 0))
 
-                self.transmitters.append({'relay': {'addr': listenIP, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'broadcast': broadcastIP, 'socket': tx, 'service': service})
+                self.transmitters.append({'relay': {'addr': listenIP, 'port': port}, 'interface': ifname, 'addr': ip, 'mac': mac, 'netmask': netmask, 'broadcast': broadcast, 'socket': tx, 'service': service})
 
         if self.isMulticast(addr):
             rx.bind((addr, port))
