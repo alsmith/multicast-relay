@@ -294,6 +294,8 @@ class PacketRelay():
                 packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
                 rx.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, packedAddress)
                 listenIP = addr
+            else:
+                listenIP = addr
 
             # Generate a transmitter socket. Each interface
             # requires its own transmitting socket.
