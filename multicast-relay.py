@@ -724,8 +724,7 @@ class PacketRelay():
                             break
 
         if not ifname:
-            print('Interface %s does not exist.' % interface)
-            sys.exit(1)
+            raise IOError('Interface %s does not exist.' % interface)
 
         try:
             # Here we want to make sure that an interface has an
