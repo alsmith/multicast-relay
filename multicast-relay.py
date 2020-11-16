@@ -658,6 +658,7 @@ class PacketRelay():
                         dstAddr = tx['broadcast']
                         destMac = self.etherAddrs[PacketRelay.BROADCAST]
                         origDstAddr = tx['broadcast']
+                        data = data[:16] + socket.inet_aton(tx['broadcast']) + data[20:]
 
                     if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
@@ -953,7 +954,7 @@ def main():
             _ = PacketRelay.ip2long(addr)
             port = int(port)
         except:
-            errorMessage = '%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast or broadcast IP address and P is a valid port number' % relay
+            errorMessage = '%s:%s: Expecting --relay A.B.C.D:P, where A.B.C.D is a multicast or broadcast IP address and P is a valid port number' % relay
             if args.foreground:
                 print(errorMessage)
             else:
