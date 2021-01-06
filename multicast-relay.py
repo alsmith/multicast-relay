@@ -268,6 +268,11 @@ class PacketRelay():
             # unicast -- we don't know yet which IP we'll want to send to
             self.etherAddrs[addr] = None
 
+            rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+            rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            rx.bind((addr, port))
+            self.receivers.append(rx)
+
         # Set up the receiving socket and corresponding IP and interface information.
         # One receiving socket is required per multicast address. But for extra
         # fun, one receiving socket for each network interface, if we're
