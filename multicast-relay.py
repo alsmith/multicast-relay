@@ -202,6 +202,8 @@ class PacketRelay():
 
         self.recentChecksums = []
 
+        self.bindings = set()
+
         self.listenAddr = listen
         self.listenSock = None
         if remote:
@@ -313,6 +315,7 @@ class PacketRelay():
         if self.isMulticast(addr):
             rx.bind((addr, port))
             self.receivers.append(rx)
+        self.bindings.add((addr, port))
 
     @staticmethod
     def unicastIpToMac(ip, procNetArp=None):
@@ -461,6 +464,9 @@ class PacketRelay():
                 else:
                     self.logger.info('Error sending packet: %s' % str(e))
 
+    def match(self, addr, port):
+        return ((addr, port)) in self.bindings
+
     def loop(self):
         # Record where the most recent SSDP searches came from, to relay unicast answers
         # Note: ideally we'd be more clever and record multiple, but in practice
@@ -532,26 +538,6 @@ class PacketRelay():
                         (data, addr) = s.recvfrom(10240)
                         addr = addr[0]
 
-                if self.remoteSockets() and not (receivingInterface == 'remote' and self.noRemoteRelay):
-                    packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
-                    for remoteConnection in self.remoteSockets():
-                        if remoteConnection == s:
-                            continue
-                        try:
-                            remoteConnection.sendall(struct.pack('!H', len(packet)) + packet)
-
-                            for remote in self.remoteAddrs:
-                                if remote['socket'] == remoteConnection and remote['connecting']:
-                                    self.logger.info('REMOTE: Connection to %s established' % remote['addr'])
-                                    remote['connecting'] = False
-                        except socket.error as e:
-                            if e.errno == errno.EAGAIN:
-                                pass
-                            else:
-                                self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
-                                self.removeConnection(remoteConnection)
-                                continue
-
                 eighthDataByte = data[8]
                 if sys.version_info > (3, 0):
                     eighthDataByte = bytes([data[8]])
@@ -584,6 +570,30 @@ class PacketRelay():
                 ipHeaderLength = (struct.unpack('B', firstDataByte)[0] & 0x0f) * 4
                 srcPort = struct.unpack('!H', data[ipHeaderLength+0:ipHeaderLength+2])[0]
                 dstPort = struct.unpack('!H', data[ipHeaderLength+2:ipHeaderLength+4])[0]
+
+                # raw sockets cannot be bound to a specific port, so we receive all UDP packets with matching dstAddr
+                if receivingInterface == 'local' and not self.match(dstAddr, dstPort):
+                    continue
+
+                if self.remoteSockets() and not (receivingInterface == 'remote' and self.noRemoteRelay):
+                    packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
+                    for remoteConnection in self.remoteSockets():
+                        if remoteConnection == s:
+                            continue
+                        try:
+                            remoteConnection.sendall(struct.pack('!H', len(packet)) + packet)
+
+                            for remote in self.remoteAddrs:
+                                if remote['socket'] == remoteConnection and remote['connecting']:
+                                    self.logger.info('REMOTE: Connection to %s established' % remote['addr'])
+                                    remote['connecting'] = False
+                        except socket.error as e:
+                            if e.errno == errno.EAGAIN:
+                                pass
+                            else:
+                                self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
+                                self.removeConnection(remoteConnection)
+                                continue
 
                 origSrcAddr = srcAddr
                 origSrcPort = srcPort
