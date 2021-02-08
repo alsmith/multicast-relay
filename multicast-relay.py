@@ -291,11 +291,12 @@ class PacketRelay():
                 rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                rx.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode('utf-8'))
 
-                rx.bind((broadcast, port))
+                rx.bind(('0.0.0.0', port))
 
                 self.receivers.append(rx)
-                listenIP = broadcast
+                listenIP = '255.255.255.255'
 
             elif self.isMulticast(addr):
                 packedAddress = struct.pack('4s4s', socket.inet_aton(addr), socket.inet_aton(ip))
