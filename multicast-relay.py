@@ -680,12 +680,15 @@ class PacketRelay():
 
                         if tx['interface'] in self.masquerade:
                             data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
-                        self.logger.info('%s%s %s byte%s from %s:%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '',
+                            srcAddr = tx['addr']
+                        asSrc = '' if srcAddr == origSrcAddr and srcPort == origSrcPort else ' (as %s:%s)' % (srcAddr, srcPort)
+                        self.logger.info('%s%s %s byte%s from %s:%s%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '',
                                                                                                           tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed',
                                                                                                           len(data),
                                                                                                           len(data) != 1 and 's' or '',
-                                                                                                          srcAddr,
-                                                                                                          srcPort,
+                                                                                                          origSrcAddr,
+                                                                                                          origSrcPort,
+                                                                                                          asSrc,
                                                                                                           receivingInterface,
                                                                                                           ttl,
                                                                                                           dstAddr,
