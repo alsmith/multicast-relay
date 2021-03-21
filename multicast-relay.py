@@ -669,6 +669,9 @@ class PacketRelay():
                     if not transmit:
                         continue
 
+                    if srcAddr == self.ssdpUnicastAddr and not self.onNetwork(srcAddr, tx['addr'], tx['netmask']):
+                        continue
+
                     if broadcastPacket:
                         dstAddr = tx['broadcast']
                         destMac = self.etherAddrs[PacketRelay.BROADCAST]
