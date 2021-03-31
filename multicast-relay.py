@@ -576,7 +576,7 @@ class PacketRelay():
                 if receivingInterface == 'local' and not self.match(dstAddr, dstPort):
                     continue
 
-                if self.remoteSockets() and not (receivingInterface == 'remote' and self.noRemoteRelay):
+                if self.remoteSockets() and not (receivingInterface == 'remote' and self.noRemoteRelay) and srcAddr != self.ssdpUnicastAddr:
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     for remoteConnection in self.remoteSockets():
                         if remoteConnection == s:
