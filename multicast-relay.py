@@ -580,7 +580,7 @@ class PacketRelay():
                 if receivingInterface == 'local' and not self.match(dstAddr, dstPort):
                     continue
 
-                if self.remoteSockets() and not (receivingInterface == 'remote' and self.noRemoteRelay):
+                if self.remoteSockets() and not (receivingInterface == 'remote' and self.noRemoteRelay) and srcAddr != self.ssdpUnicastAddr:
                     packet = self.aes.encrypt(self.MAGIC + socket.inet_aton(addr) + data)
                     for remoteConnection in self.remoteSockets():
                         if remoteConnection == s:
@@ -674,6 +674,9 @@ class PacketRelay():
                     if not transmit:
                         continue
 
+                    if srcAddr == self.ssdpUnicastAddr and not self.onNetwork(srcAddr, tx['addr'], tx['netmask']):
+                        continue
+
                     if broadcastPacket:
                         dstAddr = tx['broadcast']
                         destMac = self.etherAddrs[PacketRelay.BROADCAST]
@@ -685,18 +688,21 @@ class PacketRelay():
 
                         if tx['interface'] in self.masquerade:
                             data = data[:12] + socket.inet_aton(tx['addr']) + data[16:]
-                        self.logger.info('%s%s %s byte%s from %s:%s on %s [ttl %s] to %s:%s via %s/%s' % (tx['service'] and '[%s] ' % tx['service'] or '',
+                            srcAddr = tx['addr']
+                        asSrc = '' if srcAddr == origSrcAddr and srcPort == origSrcPort else ' (as %s:%s)' % (srcAddr, srcPort)
+                        self.logger.info('%s%s %s byte%s from %s:%s on %s [ttl %s] to %s:%s via %s/%s%s' % (tx['service'] and '[%s] ' % tx['service'] or '',
                                                                                                           tx['interface'] in self.masquerade and 'Masqueraded' or 'Relayed',
                                                                                                           len(data),
                                                                                                           len(data) != 1 and 's' or '',
-                                                                                                          srcAddr,
-                                                                                                          srcPort,
+                                                                                                          origSrcAddr,
+                                                                                                          origSrcPort,
                                                                                                           receivingInterface,
                                                                                                           ttl,
                                                                                                           dstAddr,
                                                                                                           dstPort,
                                                                                                           tx['interface'],
-                                                                                                          tx['addr']))
+                                                                                                          tx['addr'],
+                                                                                                          asSrc))
 
                         try:
                             self.transmitPacket(tx['socket'], tx['mac'], destMac, ipHeaderLength, data)
