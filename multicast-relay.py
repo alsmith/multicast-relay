@@ -291,6 +291,10 @@ class PacketRelay():
                 rx = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+                if 'SO_BINDTODEVICE' not in dir(socket):
+                    socket.SO_BINDTODEVICE = 25
+
                 rx.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, ifname.encode('utf-8'))
 
                 rx.bind(('0.0.0.0', port))
