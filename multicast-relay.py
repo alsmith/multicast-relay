@@ -204,7 +204,17 @@ class PacketRelay():
 
         self.bindings = set()
 
-        self.listenAddr = listen
+        self.listenAddr = []
+        for addr in listen:
+            components = addr.split('/')
+            if len(components) == 1:
+                components.append('32')
+            if not components[1].isdigit():
+                raise ValueError('--listen netmask is not an integer')
+            if int(components[1]) not in range(0, 33):
+                raise ValueError('--listen netmask specifies an invalid netmask')
+            self.listenAddr.append(components)
+
         self.listenSock = None
         if remote:
             self.remoteAddrs = list(map(lambda remote: {'addr': remote, 'socket': None, 'connecting': False, 'connectFailure': None}, remote))
@@ -494,7 +504,7 @@ class PacketRelay():
             for s in inputready:
                 if s == self.listenSock:
                     (remoteConnection, remoteAddr) = s.accept()
-                    if remoteAddr[0] not in self.listenAddr:
+                    if not len(list(filter(lambda addr: PacketRelay.onNetwork(remoteAddr[0], addr[0], PacketRelay.cidrToNetmask(addr[1])), self.listenAddr))):
                         self.logger.info('Refusing connection from %s - not in %s' % (remoteAddr[0], self.listenAddr))
                         remoteConnection.close()
                     else:
