@@ -504,7 +504,7 @@ class PacketRelay():
             for s in inputready:
                 if s == self.listenSock:
                     (remoteConnection, remoteAddr) = s.accept()
-                    if not len(list(filter(lambda addr: PacketRelay.onNetwork(remoteAddr[0], addr[0], PacketRelay.cidrToNetmask(addr[1])), self.listenAddr))):
+                    if not len(list(filter(lambda addr: PacketRelay.onNetwork(remoteAddr[0], addr[0], PacketRelay.cidrToNetmask(int(addr[1]))), self.listenAddr))):
                         self.logger.info('Refusing connection from %s - not in %s' % (remoteAddr[0], self.listenAddr))
                         remoteConnection.close()
                     else:
