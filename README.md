@@ -58,7 +58,7 @@ it's rather tricky to compile up netifaces.
 to each interface rather than bailing immediately if an interface is yet to be
 assigned an address.
 
-`--listen` for connections from the specified remote host(s).
+`--listen` for connections from the specified remote host(s) or network(s), for example `--listen 10.0.0.1 192.168.0.0/16`.
 
 `--remote` connect to the specified remote host. If either --listen or --remote
 are specified, then one can also specify just one local interface with --interfaces.
