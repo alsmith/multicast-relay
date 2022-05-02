@@ -205,15 +205,16 @@ class PacketRelay():
         self.bindings = set()
 
         self.listenAddr = []
-        for addr in listen:
-            components = addr.split('/')
-            if len(components) == 1:
-                components.append('32')
-            if not components[1].isdigit():
-                raise ValueError('--listen netmask is not an integer')
-            if int(components[1]) not in range(0, 33):
-                raise ValueError('--listen netmask specifies an invalid netmask')
-            self.listenAddr.append(components)
+        if listen:
+            for addr in listen:
+                components = addr.split('/')
+                if len(components) == 1:
+                    components.append('32')
+                if not components[1].isdigit():
+                    raise ValueError('--listen netmask is not an integer')
+                if int(components[1]) not in range(0, 33):
+                    raise ValueError('--listen netmask specifies an invalid netmask')
+                self.listenAddr.append(components)
 
         self.listenSock = None
         if remote:
