@@ -313,6 +313,7 @@ class PacketRelay():
                 rx.bind(('0.0.0.0', port))
 
                 self.receivers.append(rx)
+                self.bindings.add((broadcast, port))
                 listenIP = '255.255.255.255'
 
             elif self.isMulticast(addr):
@@ -668,7 +669,7 @@ class PacketRelay():
                 broadcastPacket = False
                 if receivingInterface == 'local':
                     for tx in self.transmitters:
-                        if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] \
+                        if (origDstAddr == tx['relay']['addr'] or origDstAddr == tx.get('broadcast')) and origDstPort == tx['relay']['port'] \
                                 and self.onNetwork(addr, tx['addr'], tx['netmask']):
                             receivingInterface = tx['interface']
                             broadcastPacket = (origDstAddr == tx['broadcast'])
@@ -696,7 +697,7 @@ class PacketRelay():
                         origDstAddr = tx['broadcast']
                         data = data[:16] + socket.inet_aton(tx['broadcast']) + data[20:]
 
-                    if origDstAddr == tx['relay']['addr'] and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
+                    if (origDstAddr == tx['relay']['addr'] or origDstAddr == tx.get('broadcast')) and origDstPort == tx['relay']['port'] and (self.oneInterface or not self.onNetwork(addr, tx['addr'], tx['netmask'])):
                         destMac = destMac if destMac else self.etherAddrs[dstAddr]
 
                         if tx['interface'] in self.masquerade:
