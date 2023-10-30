@@ -4,12 +4,14 @@ import argparse
 import binascii
 import errno
 import json
+import http.server
 import os
 import re
 import select
 import socket
 import struct
 import sys
+import threading
 import time
 
 # Al Smith <ajs@aeschi.eu> January 2018
@@ -874,6 +876,13 @@ class PacketRelay():
     def cidrToNetmask(bits):
         return socket.inet_ntoa(struct.pack('!I', (1 << 32) - (1 << (32 - bits))))
 
+class K8sCheck(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(bytes('OK', 'utf-8'))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--interfaces', nargs='+', required=True,
@@ -921,6 +930,8 @@ def main():
                         help='Only relay packets on local interfaces: don\'t relay packets out of --remote connected relays.')
     parser.add_argument('--aes',
                         help='Encryption key for the connection to the remote multicast-relay.')
+    parser.add_argument('--k8sport', type=int,
+                        help='Run k8s liveness/readiness server on the given port.')
     parser.add_argument('--foreground', action='store_true',
                         help='Do not background.')
     parser.add_argument('--logfile',
@@ -1023,6 +1034,10 @@ def main():
 
         logger.info('Adding %s relay for %s:%s%s' % (relayType, addr, port, relay[1] and ' (%s)' % relay[1] or ''))
         packetRelay.addListener(addr, port, relay[1])
+
+    if args.k8sport:
+        webServer = http.server.HTTPServer(('0.0.0.0', args.k8sport), K8sCheck)
+        threading.Thread(target=webServer.serve_forever, daemon=True).start()
 
     packetRelay.loop()
 
